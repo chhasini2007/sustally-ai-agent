@@ -152,5 +152,50 @@ class TestLLMRouterFallback(unittest.TestCase):
         self.assertIn("Neither OmniRoute nor Ollama is reachable", response_text)
         print("Test passed: Unreachable Ollama degrades cleanly.")
 
+    def test_grok_direct_path_no_others(self):
+        """
+        Confirms that with LLM_PROVIDER=grok, generate() calls Grok directly on the first attempt.
+        """
+        from unittest.mock import MagicMock
+        settings.LLM_PROVIDER = "grok"
+        
+        router = LLMRouter()
+        router.omniroute.generate = MagicMock(side_effect=Exception("OmniRoute generate should not be called!"))
+        router.ollama.generate = MagicMock(side_effect=Exception("Ollama generate should not be called!"))
+        
+        def mock_gen():
+            yield "Hello from Mock Grok"
+        router.grok.generate = MagicMock(return_value=mock_gen())
+        
+        messages = [{"role": "user", "content": "Hello"}]
+        gen, provider = router.generate(messages, stream=False)
+        
+        self.assertEqual(provider, "grok")
+        self.assertEqual("".join(list(gen)), "Hello from Mock Grok")
+        router.omniroute.generate.assert_not_called()
+        router.ollama.generate.assert_not_called()
+        print("Test passed: Grok direct path does not invoke OmniRoute or Ollama.")
+
+    def test_grok_unreachable_degrades_cleanly(self):
+        """
+        Confirms that with LLM_PROVIDER=grok and Grok unreachable, the system degrades cleanly.
+        """
+        settings.LLM_PROVIDER = "grok"
+        settings.GROK_CONNECT_TIMEOUT = 1
+        
+        router = LLMRouter()
+        # Mock actual request failure for grok
+        from unittest.mock import MagicMock
+        router.grok.generate = MagicMock(side_effect=requests.exceptions.ConnectTimeout("Connection timed out"))
+        
+        messages = [{"role": "user", "content": "Hello"}]
+        
+        gen, provider = router.generate(messages, stream=False)
+        response_text = "".join(list(gen))
+        
+        self.assertEqual(provider, "unavailable")
+        self.assertIn("Grok API is not reachable", response_text)
+        print("Test passed: Unreachable Grok degrades cleanly.")
+
 if __name__ == "__main__":
     unittest.main()
