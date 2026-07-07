@@ -1,0 +1,13 @@
+__pycache__/
+.venv/
+venv/
+*.pyc
+.env
+data/raw_reports/
+data/*.db
+data/*.sqlite
+data/processed/
+vector_db/
+.streamlit/*
+!.streamlit/config.toml
+!.streamlit/secrets.toml.example
