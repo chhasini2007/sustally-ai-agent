@@ -24,7 +24,7 @@ AI-powered Sustainability Report Analysis Agent. Rebuilt with a performance-opti
 
 Sustally supports different LLM providers depending on the deployment environment:
 - **Local Development**: Set `LLM_PROVIDER=ollama` in your `.env`. Make sure Ollama is running locally with the configured model (default: `qwen2.5:7b`).
-- **Cloud Deployment (Streamlit Community Cloud)**: Set `LLM_PROVIDER=grok` and provide `GROK_API_KEY` via the platform's secrets manager. Ollama cannot run on Streamlit Cloud, so Grok serves as the cloud LLM provider.
+- **Cloud Deployment (Streamlit Community Cloud)**: Set `LLM_PROVIDER=openai` and provide `OPENAI_API_KEY` via the platform's secrets manager. Ollama cannot run on Streamlit Cloud, so OpenAI (gpt-4o-mini) serves as the cloud LLM provider.
 
 ## Running the App
 

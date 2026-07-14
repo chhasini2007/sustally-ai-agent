@@ -20,6 +20,12 @@ class MetricExtractor:
                 continue
                 
             for key, info in METRIC_TAXONOMY.items():
+                # Safety override: headcount representation must not match wage/pay lines (Bug 1)
+                if key == "female_employee_headcount_share_pct":
+                    line_lower = line.lower()
+                    if any(w in line_lower for w in ["wage", "salary", "pay", "remuneration"]):
+                        continue
+
                 for pattern in info["patterns"]:
                     match = re.search(pattern, line, re.IGNORECASE)
                     if match:
@@ -27,21 +33,32 @@ class MetricExtractor:
                         remaining_text = line[match.end():]
                         num_match = self.number_pattern.search(remaining_text)
                         if num_match:
-                            num_str = num_match.group(0).replace(",", "")
-                            try:
-                                val = float(num_str)
-                                # Check if unit is in the text
-                                unit = info["unit"]
-                                # Check if actual unit matches (e.g. tCO2e or % or kl)
-                                extracted.append({
-                                    "metric_key": key,
-                                    "metric_label": line.strip()[:100], # Keep a snippet
-                                    "value": val,
-                                    "unit": unit
-                                })
-                                break # Stop checking other patterns for this key in this line
-                            except ValueError:
-                                continue
+                            # Verify number is in close proximity and not separated by a sentence boundary
+                            match_to_num_text = remaining_text[:num_match.start()]
+                            if len(match_to_num_text) <= 30 and not re.search(r"\.\s+[A-Z]", match_to_num_text):
+                                num_str = num_match.group(0).replace(",", "")
+                                try:
+                                    val = float(num_str)
+                                    # Check if unit is in the text
+                                    unit = info["unit"]
+                                    
+                                    # Percentage checks and scaling
+                                    is_pct = key.endswith("_pct") or "_pct" in key or "_share" in key or "_ratio" in key
+                                    if is_pct:
+                                        if 0.0 <= val <= 1.0:
+                                            val = val * 100.0
+                                        elif val > 100.0 or val < 0.0:
+                                            continue
+
+                                    extracted.append({
+                                        "metric_key": key,
+                                        "metric_label": line.strip()[:100], # Keep a snippet
+                                        "value": val,
+                                        "unit": unit
+                                    })
+                                    break # Stop checking other patterns for this key in this line
+                                except ValueError:
+                                    continue
         return extracted
 
     def extract_from_table(self, table: List[List[str]], report_year: str) -> List[Dict[str, Any]]:
@@ -71,6 +88,11 @@ class MetricExtractor:
             row_label = str(row[0]).strip().lower()
             
             for key, info in METRIC_TAXONOMY.items():
+                # Safety override: headcount representation must not match wage/pay rows (Bug 1)
+                if key == "female_employee_headcount_share_pct":
+                    if any(w in row_label for w in ["wage", "salary", "pay", "remuneration"]):
+                        continue
+
                 match_found = False
                 for pattern in info["patterns"]:
                     if re.search(pattern, row_label, re.IGNORECASE):
@@ -95,6 +117,15 @@ class MetricExtractor:
                             val_clean = num_match.group(0).replace(",", "")
                             try:
                                 val = float(val_clean)
+                                
+                                # Percentage checks and scaling
+                                is_pct = key.endswith("_pct") or "_pct" in key or "_share" in key or "_ratio" in key
+                                if is_pct:
+                                    if 0.0 <= val <= 1.0:
+                                        val = val * 100.0
+                                    elif val > 100.0 or val < 0.0:
+                                        continue
+
                                 extracted.append({
                                     "metric_key": key,
                                     "metric_label": str(row[0]).strip(),

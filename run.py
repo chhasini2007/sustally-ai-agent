@@ -5,6 +5,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+import config
 import argparse
 from src.ingestion.document_manager import DocumentManager
 from src.retrieval.company_router import CompanyRouter
@@ -17,10 +18,20 @@ def main():
     parser.add_argument("--check-llm", action="store_true", help="Run pre-flight checks against LLM providers")
     parser.add_argument("--import-xml-folder", type=str, help="Bulk import a folder of unsorted XML reports")
     parser.add_argument("--recursive", action="store_true", help="Enable recursive scanning for --import-xml-folder")
+    parser.add_argument("--import-xml", action="store_true", help="Scan data/incoming_xml/, validate, index, and organize reports")
     
     args = parser.parse_args()
     
-    if args.import_xml_folder:
+    if args.import_xml:
+        from src.ingestion.xml_importer import import_xml_reports
+        stats = import_xml_reports()
+        print("XML files scanned:", stats["scanned"])
+        print("Successfully imported:", stats["success"])
+        print("Already indexed:", stats["indexed"])
+        print("Moved to _unsorted:", stats["unsorted"])
+        print("Failed:", stats["failed"])
+        
+    elif args.import_xml_folder:
         from src.ingestion.bulk_xml_importer import import_xml_folder
         import_xml_folder(args.import_xml_folder, recursive=args.recursive)
         
@@ -45,8 +56,7 @@ def main():
         
         print("\n--- Ingestion Link Extraction Summary ---")
         print(f"Links found: {summary['found']}")
-        print(f"XML links matched: {summary['xml_matched']}")
-        print(f"PDF links skipped: {summary['pdf_skipped']}")
+        print(f"Report links matched (XML/PDF): {summary['xml_matched']}")
         print(f"Unresolved/other: {summary['unresolved']}")
         print(f"Downloaded (new): {summary['downloaded']}")
         print(f"Skipped (already indexed): {summary['skipped_indexed']}")
@@ -55,15 +65,12 @@ def main():
     elif args.check_llm:
         import requests
         from config import settings
-        from scripts.check_omniroute import check_omniroute
         
         print("=== Sustally Pre-flight LLM Diagnostics ===")
-        # 1. Check OmniRoute
-        omni_ok = check_omniroute()
         
-        # 2. Check Ollama
+        # 1. Check Ollama
         ollama_url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags"
-        print(f"\nChecking Ollama connectivity at: {ollama_url}")
+        print(f"Checking Ollama connectivity at: {ollama_url}")
         ollama_ok = False
         try:
             resp = requests.get(ollama_url, timeout=3.0)
@@ -76,16 +83,19 @@ def main():
             print(f"🔴 FAIL: Ollama is NOT reachable: {str(e)}")
             
         print("\n--- Summary ---")
-        print(f"OmniRoute: {'AVAILABLE' if omni_ok else 'UNAVAILABLE'}")
         print(f"Ollama:    {'AVAILABLE' if ollama_ok else 'UNAVAILABLE'}")
         
         active_provider = settings.LLM_PROVIDER.strip().lower()
         if active_provider == "ollama":
-            print("Active provider: Ollama (configured) — OmniRoute check is informational only.")
+            print("Active provider: Ollama (configured).")
             is_active_ok = ollama_ok
-        elif active_provider == "omniroute":
-            print("Active provider: OmniRoute (configured) — Ollama check is informational only.")
-            is_active_ok = omni_ok
+        elif active_provider == "openai":
+            if settings.OPENAI_API_KEY.strip():
+                print("Active provider: OpenAI (configured). Checking connectivity is skipped (cloud API), API Key is set.")
+                is_active_ok = True
+            else:
+                print("🔴 FAIL: Active provider is OpenAI but OPENAI_API_KEY is not set in environment.")
+                is_active_ok = False
         else:
             print(f"Active provider: {settings.LLM_PROVIDER} (configured) — unrecognized.")
             is_active_ok = False

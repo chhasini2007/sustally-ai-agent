@@ -1,6 +1,11 @@
 import os
 import re
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+    _ = fitz.Rect
+    HAS_FITZ = True
+except (ImportError, AttributeError, Exception):
+    HAS_FITZ = False
 import requests
 import hashlib
 from typing import List, Dict, Any, Tuple, Optional
@@ -29,49 +34,85 @@ class LinkExtractorUtility:
         Returns:
             List[Dict[str, Any]]: [{"url": str, "page": int, "context": str}]
         """
-        doc = fitz.open(pdf_path)
         extracted = []
         seen_urls = set()
 
-        for page_num, page in enumerate(doc):
-            page_idx = page_num + 1
-            page_text = page.get_text()
-            
-            # 1. Extract link annotations
-            for link in page.get_links():
-                uri = link.get("uri")
-                if uri and uri not in seen_urls:
-                    seen_urls.add(uri)
-                    extracted.append({
-                        "url": uri,
-                        "page": page_idx,
-                        "context": page_text
-                    })
-            
-            # 2. Extract plain text URLs using regex
-            matches = self.url_regex.findall(page_text)
-            for uri in matches:
-                if uri not in seen_urls:
-                    seen_urls.add(uri)
-                    extracted.append({
-                        "url": uri,
-                        "page": page_idx,
-                        "context": page_text
-                    })
+        if HAS_FITZ:
+            doc = fitz.open(pdf_path)
+            for page_num, page in enumerate(doc):
+                page_idx = page_num + 1
+                page_text = page.get_text()
+                
+                # 1. Extract link annotations
+                for link in page.get_links():
+                    uri = link.get("uri")
+                    if uri and uri not in seen_urls:
+                        seen_urls.add(uri)
+                        extracted.append({
+                            "url": uri,
+                            "page": page_idx,
+                            "context": page_text
+                        })
+                
+                # 2. Extract plain text URLs using regex
+                matches = self.url_regex.findall(page_text)
+                for uri in matches:
+                    if uri not in seen_urls:
+                        seen_urls.add(uri)
+                        extracted.append({
+                            "url": uri,
+                            "page": page_idx,
+                            "context": page_text
+                        })
+        else:
+            # Fallback using pypdf
+            from pypdf import PdfReader
+            reader = PdfReader(pdf_path)
+            for page_num, page in enumerate(reader.pages):
+                page_idx = page_num + 1
+                page_text = page.extract_text() or ""
+                
+                # 1. Extract link annotations
+                if "/Annots" in page:
+                    for annot in page["/Annots"]:
+                        obj = annot.get_object()
+                        if obj and obj.get("/Subtype") == "/Link":
+                            if "/A" in obj and "/URI" in obj["/A"]:
+                                uri = obj["/A"]["/URI"]
+                                if uri and uri not in seen_urls:
+                                    seen_urls.add(uri)
+                                    extracted.append({
+                                        "url": uri,
+                                        "page": page_idx,
+                                        "context": page_text
+                                    })
+                
+                # 2. Extract plain text URLs using regex
+                matches = self.url_regex.findall(page_text)
+                for uri in matches:
+                    if uri not in seen_urls:
+                        seen_urls.add(uri)
+                        extracted.append({
+                            "url": uri,
+                            "page": page_idx,
+                            "context": page_text
+                        })
 
         return extracted
 
-    def is_xml_link(self, url: str, session: requests.Session) -> Tuple[bool, str]:
+    def is_report_link(self, url: str, session: requests.Session) -> Tuple[bool, str, str]:
         """
-        Verifies if the URL links to an XML format resource.
+        Verifies if the URL links to an XML or PDF report resource.
         Returns:
-            (is_xml: bool, reason: str)
+            (is_report: bool, file_type: str, reason: str)
         """
         url_lower = url.lower()
         
         # Pass 1: Cheap path/query check
         if "xml" in url_lower:
-            return True, "Cheap check: URL contains 'xml'"
+            return True, "xml", "Cheap check: URL contains 'xml'"
+        if "pdf" in url_lower:
+            return True, "pdf", "Cheap check: URL contains 'pdf'"
             
         # Pass 2: HEAD request verification for ambiguous URLs
         try:
@@ -79,21 +120,32 @@ class LinkExtractorUtility:
             content_type = resp.headers.get("Content-Type", "").lower()
             
             if "application/pdf" in content_type:
-                return False, f"Skipped: Content-Type is PDF ({content_type})"
+                return True, "pdf", f"Verified HEAD: Content-Type is PDF ({content_type})"
             if "xml" in content_type:
-                return True, f"Verified: Content-Type contains xml ({content_type})"
+                return True, "xml", f"Verified HEAD: Content-Type contains xml ({content_type})"
                 
             # As a final fallback, try GET headers (sometimes HEAD is not supported)
             if resp.status_code in [404, 405]:
                 resp_get = session.get(url, timeout=5, allow_redirects=True, stream=True)
                 content_type = resp_get.headers.get("Content-Type", "").lower()
                 resp_get.close()
+                if "application/pdf" in content_type:
+                    return True, "pdf", f"Verified GET: Content-Type is PDF ({content_type})"
                 if "xml" in content_type:
-                    return True, f"Verified GET: Content-Type contains xml ({content_type})"
+                    return True, "xml", f"Verified GET: Content-Type contains xml ({content_type})"
                     
-            return False, f"Skipped: Content-Type ({content_type}) does not contain xml"
+            return False, "unresolved", f"Skipped: Content-Type ({content_type}) does not contain xml/pdf"
         except Exception as e:
-            return False, f"Error verifying HEAD: {str(e)}"
+            return False, "unresolved", f"Error verifying HEAD: {str(e)}"
+
+    def is_xml_link(self, url: str, session: requests.Session) -> Tuple[bool, str]:
+        """
+        Verifies if the URL links to an XML format resource.
+        Returns:
+            (is_xml: bool, reason: str)
+        """
+        is_report, file_type, reason = self.is_report_link(url, session)
+        return (is_report and file_type == "xml"), reason
 
     def resolve_company_year(self, context_text: str, url: str) -> Tuple[str, str]:
         """
@@ -105,7 +157,8 @@ class LinkExtractorUtility:
         
         # If not resolved in text, try matching URL path
         if not resolved_companies:
-            resolved_companies, _ = self.company_router.resolve_companies_and_years(url)
+            cleaned_url = url.replace("_", " ").replace("-", " ").replace("/", " ").replace(".", " ")
+            resolved_companies, _ = self.company_router.resolve_companies_and_years(cleaned_url)
             
         if not years:
             years = self.year_regex.findall(url)
@@ -120,10 +173,9 @@ class LinkExtractorUtility:
         context = item["context"]
         page = item["page"]
         
-        is_xml, reason = self.is_xml_link(url, session)
-        if not is_xml:
-            status = "skipped_pdf" if "pdf" in reason.lower() else "unresolved"
-            return {"url": url, "status": status, "reason": reason}
+        is_report, file_type, reason = self.is_report_link(url, session)
+        if not is_report:
+            return {"url": url, "status": "unresolved", "reason": reason}
             
         # Resolve destination metadata
         company, year = self.resolve_company_year(context, url)
@@ -145,18 +197,18 @@ class LinkExtractorUtility:
                     break
                     
             if is_indexed:
-                return {"url": url, "status": "skipped_indexed", "company": company, "year": year}
+                return {"url": url, "status": "skipped_indexed", "company": company, "year": year, "file_type": file_type}
                 
             # Create directories
             target_dir = Path(settings.RAW_DIR) / company / year
             target_dir.mkdir(parents=True, exist_ok=True)
             
             # Detect unique file name
-            file_name = "report.xml"
+            file_name = f"report.{file_type}"
             target_path = target_dir / file_name
             suffix = 1
             while target_path.exists():
-                file_name = f"report_{suffix}.xml"
+                file_name = f"report_{suffix}.{file_type}"
                 target_path = target_dir / file_name
                 suffix += 1
                 
@@ -168,7 +220,8 @@ class LinkExtractorUtility:
                 "status": "downloaded",
                 "company": company,
                 "year": year,
-                "path": str(target_path)
+                "path": str(target_path),
+                "file_type": file_type
             }
         except Exception as e:
             return {"url": url, "status": "error", "reason": f"Download failed: {str(e)}"}
@@ -207,9 +260,7 @@ class LinkExtractorUtility:
         downloaded_paths = []
         for res in results:
             status = res["status"]
-            if status == "skipped_pdf":
-                summary["pdf_skipped"] += 1
-            elif status == "unresolved":
+            if status == "unresolved":
                 summary["unresolved"] += 1
             elif status == "skipped_indexed":
                 summary["xml_matched"] += 1
@@ -227,6 +278,7 @@ class LinkExtractorUtility:
         if downloaded_paths:
             print(f"Informing DocumentManager to ingest {len(downloaded_paths)} newly downloaded reports...")
             self.document_manager.load_index() # reload index
-            self.document_manager.ingest_new_reports()
+            path_to_url = {res["path"]: res["url"] for res in results if res["status"] == "downloaded"}
+            self.document_manager.ingest_new_reports(target_files=downloaded_paths, source_urls=path_to_url)
             
         return summary

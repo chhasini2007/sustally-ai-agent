@@ -72,3 +72,47 @@ def create_comparison_chart(
     )
     
     return fig
+
+def create_trend_chart(
+    company: str,
+    metric_key: str,
+    years: List[str],
+    values: List[float]
+) -> Optional[go.Figure]:
+    """
+    Generates a Plotly Scatter Figure showing a single metric's trend over years for one company.
+    """
+    metric_info = METRIC_TAXONOMY.get(metric_key)
+    if not metric_info:
+        return None
+        
+    title = metric_info["label"]
+    unit = metric_info["unit"]
+    
+    # Sort data by year
+    sorted_pairs = sorted(zip(years, values), key=lambda x: str(x[0]))
+    sorted_years = [str(p[0]) for p in sorted_pairs]
+    sorted_values = [p[1] for p in sorted_pairs]
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=sorted_years,
+        y=sorted_values,
+        mode='lines+markers',
+        marker=dict(size=8, color="#00E676"),
+        line=dict(width=3, color="#00E676"),
+        text=sorted_values,
+        textposition='top center'
+    ))
+    
+    fig.update_layout(
+        title=f"{company} {title} Trend",
+        xaxis_title="Year",
+        yaxis_title=f"Value ({unit})",
+        template="plotly_dark",
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#E0E0E0')
+    )
+    
+    return fig

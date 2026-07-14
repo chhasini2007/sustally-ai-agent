@@ -1,6 +1,11 @@
 import sys
 import os
-import fitz
+try:
+    import fitz
+    _ = fitz.Rect
+    HAS_FITZ = True
+except (ImportError, AttributeError, Exception):
+    HAS_FITZ = False
 from unittest.mock import MagicMock
 
 # Add project root to path
@@ -9,19 +14,56 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.ingestion.link_extractor import LinkExtractorUtility
 
 def create_test_pdf(filename="test_links.pdf"):
-    doc = fitz.open()
-    page = doc.new_page()
-    # Insert visible text with a URL
-    page.insert_text((50, 50), "TCS 2024 Report Link: http://example.com/tcs_report_link.xml")
-    # Insert a link annotation
-    link_rect = fitz.Rect(50, 100, 250, 120)
-    page.insert_link({
-        "kind": fitz.LINK_URI,
-        "from": link_rect,
-        "uri": "http://example.com/infosys_report_2023.xml"
-    })
-    doc.save(filename)
-    doc.close()
+    if HAS_FITZ:
+        doc = fitz.open()
+        page = doc.new_page()
+        # Insert visible text with a URL
+        page.insert_text((50, 50), "TCS 2024 Report Link: http://example.com/tcs_report_link.xml")
+        # Insert a link annotation
+        link_rect = fitz.Rect(50, 100, 250, 120)
+        page.insert_link({
+            "kind": fitz.LINK_URI,
+            "from": link_rect,
+            "uri": "http://example.com/infosys_report_2023.xml"
+        })
+        doc.save(filename)
+        doc.close()
+    else:
+        # Fallback PDF generation using pypdf
+        from pypdf import PdfWriter
+        from pypdf.generic import DecodedStreamObject, NameObject, NumberObject, DictionaryObject
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=612, height=792)
+        
+        # Define Helvetica Font Resource
+        font_dict = DictionaryObject({
+            NameObject("/F1"): DictionaryObject({
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica")
+            })
+        })
+        resources_dict = DictionaryObject({
+            NameObject("/Font"): font_dict
+        })
+        page[NameObject("/Resources")] = resources_dict
+        
+        # Inject text into the content stream
+        content_stream = b"BT /F1 12 Tf 50 700 Td (TCS 2024 Report Link: http://example.com/tcs_report_link.xml) Tj ET"
+        stream = DecodedStreamObject()
+        stream._data = content_stream
+        stream[NameObject("/Length")] = NumberObject(len(content_stream))
+        page[NameObject("/Contents")] = stream
+        
+        # Add a URI link annotation
+        writer.add_uri(
+            page_number=0,
+            uri="http://example.com/infosys_report_2023.xml",
+            rect=(50, 100, 250, 120)
+        )
+        
+        with open(filename, "wb") as f:
+            writer.write(f)
 
 def run_tests():
     # 1. Create a dummy PDF with links

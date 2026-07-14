@@ -23,13 +23,54 @@ class TestHistoryAndCache(unittest.TestCase):
     def setUp(self):
         self.store = HistoryStore(db_path=TEST_DB_PATH)
         
+        # Seed mock metrics for comparison tests
+        from src.database.metrics_store import MetricsStore
+        m_store = MetricsStore()
+        m_store.clear_company_metrics("Tata Consultancy Services Limited", "2024")
+        m_store.clear_company_metrics("Infosys Limited", "2024")
+        m_store.save_metrics_batch([
+            {
+                "company": "Tata Consultancy Services Limited",
+                "year": "2024",
+                "metric_key": "water_consumption_kl",
+                "metric_label": "Water consumption",
+                "value": 15000.0,
+                "unit": "kl",
+                "source_file": "tcs_report.xml",
+                "page": "1"
+            },
+            {
+                "company": "Infosys Limited",
+                "year": "2024",
+                "metric_key": "water_consumption_kl",
+                "metric_label": "Water consumption",
+                "value": 12000.0,
+                "unit": "kl",
+                "source_file": "infosys_report.xml",
+                "page": "1"
+            },
+            {
+                "company": "Infosys Limited",
+                "year": "2024",
+                "metric_key": "scope1_emissions_tco2e",
+                "metric_label": "Scope 1 emissions",
+                "value": 12450.5,
+                "unit": "tCO2e",
+                "source_file": "infosys_report.xml",
+                "page": "1"
+            }
+        ])
+        
         # Clean tables to ensure fresh state for every test case
-        with sqlite3.connect(TEST_DB_PATH) as conn:
+        conn = sqlite3.connect(TEST_DB_PATH)
+        try:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM messages")
             cursor.execute("DELETE FROM conversations")
             cursor.execute("DELETE FROM charts")
             conn.commit()
+        finally:
+            conn.close()
             
         # Mock LLMRouter.generate to make tests run instantly without querying local Ollama
         def mock_gen(*args, **kwargs):
@@ -149,15 +190,17 @@ class TestHistoryAndCache(unittest.TestCase):
         )
         self.assertFalse(is_reused1)
         
-        # Get initial creation time
-        with sqlite3.connect(TEST_DB_PATH) as conn:
+        # Get initial creation time and age it to simulate elapsed time
+        conn = sqlite3.connect(TEST_DB_PATH)
+        try:
             cursor = conn.cursor()
+            cursor.execute("UPDATE charts SET created_at = datetime('now', '-1 hour') WHERE id = ?", (cid1,))
+            conn.commit()
             cursor.execute("SELECT created_at FROM charts WHERE id = ?", (cid1,))
             original_created_at = cursor.fetchone()[0]
+        finally:
+            conn.close()
             
-        # Wait a small fraction of a second to ensure timestamp difference if regenerated
-        time.sleep(0.1)
-        
         # Simulate a new file being ingested by modifying settings.DOC_INDEX_PATH
         # We will write a dummy document_index.json with a processed_date set to NOW
         temp_index_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "test_document_index.json"))
@@ -187,10 +230,13 @@ class TestHistoryAndCache(unittest.TestCase):
             self.assertFalse(is_reused2) # Should NOT be reused because it is stale
             
             # Check database for updated created_at
-            with sqlite3.connect(TEST_DB_PATH) as conn:
+            conn = sqlite3.connect(TEST_DB_PATH)
+            try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT created_at FROM charts WHERE id = ?", (cid2,))
                 new_created_at = cursor.fetchone()[0]
+            finally:
+                conn.close()
                 
             self.assertNotEqual(original_created_at, new_created_at)
             print("Test 3 Passed: Stale cache detected and regenerated successfully after new ingestion simulation.")

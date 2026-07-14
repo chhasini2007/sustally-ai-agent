@@ -25,8 +25,8 @@ def detect_metadata_from_xml(file_path: Path) -> Tuple[Optional[str], Optional[s
     year_raw = None
 
     # Tag names we look for (case-insensitive)
-    company_tags = {"company", "company_name", "companyname", "organization", "organisation", "name"}
-    year_tags = {"year", "reporting_year", "reportingyear", "fiscal_year", "fiscalyear", "reporting_period", "reportingperiod", "period"}
+    company_tags = {"company", "company_name", "companyname", "organization", "organisation", "name", "nameofthecompany", "nameofthelistedentity", "nameoflistedentity", "nameoftheentity"}
+    year_tags = {"year", "reporting_year", "reportingyear", "fiscal_year", "fiscalyear", "reporting_period", "reportingperiod", "period", "enddate", "reportingperiod"}
 
     for node in root.iter():
         # Remove namespace prefix if any (e.g. {http://example.com}company -> company)
@@ -38,32 +38,64 @@ def detect_metadata_from_xml(file_path: Path) -> Tuple[Optional[str], Optional[s
             if node.text and node.text.strip():
                 year_raw = node.text.strip()
 
-    if not company_raw and not year_raw:
-        return None, None, "missing company tag / missing year tag"
-    if not company_raw:
-        return None, None, "missing company tag"
-    if not year_raw:
-        return None, None, "missing year tag"
+    company = None
+    year = None
+    company_err = None
+    year_err = None
 
-    # Resolve company name
     company_router = CompanyRouter()
-    resolved_companies, _ = company_router.resolve_companies_and_years(company_raw)
 
-    if not resolved_companies:
-        return None, None, f"ambiguous (company name '{company_raw}' not recognized by router)"
-    if len(resolved_companies) > 1:
-        return None, None, f"ambiguous (multiple matches for '{company_raw}': {resolved_companies})"
-    
-    company = resolved_companies[0]
+    if company_raw:
+        resolved_companies, _ = company_router.resolve_companies_and_years(company_raw)
+        if not resolved_companies:
+            company = company_raw.strip()
+        elif len(resolved_companies) > 1:
+            company_err = f"ambiguous (multiple matches for '{company_raw}': {resolved_companies})"
+        else:
+            company = resolved_companies[0]
+    else:
+        company_err = "missing company tag"
 
-    # Resolve year
-    year_matches = re.findall(r"(?<!\d)(20\d{2}|19\d{2})(?!\d)", year_raw)
-    if not year_matches:
-        return None, None, f"missing year tag (invalid year format: '{year_raw}')"
-    if len(set(year_matches)) > 1:
-        return None, None, f"ambiguous (multiple years found: {year_matches})"
+    if year_raw:
+        year_matches = re.findall(r"(?<!\d)(20\d{2}|19\d{2})(?!\d)", year_raw)
+        if not year_matches:
+            year_err = f"missing year tag (invalid year format: '{year_raw}')"
+        elif len(set(year_matches)) > 1:
+            year_err = f"ambiguous (multiple years found: {year_matches})"
+        else:
+            year = year_matches[0]
+    else:
+        year_err = "missing year tag"
 
-    year = year_matches[0]
+    # Fallback to filename
+    if not company or not year:
+        filename = file_path.name
+        fn_companies, fn_years = company_router.resolve_companies_and_years(filename)
+        
+        if not company:
+            if fn_companies and len(fn_companies) == 1:
+                company = fn_companies[0]
+                company_err = None
+            elif fn_companies and len(fn_companies) > 1:
+                company_err = f"ambiguous filename (multiple company matches: {fn_companies})"
+            else:
+                if not company_err or company_err == "missing company tag":
+                    company_err = "missing company tag and undetected from filename"
+
+        if not year:
+            if fn_years:
+                year = fn_years[0]
+                year_err = None
+            else:
+                if not year_err or year_err == "missing year tag":
+                    year_err = "missing year tag and undetected from filename"
+
+    if not company and not year:
+        return None, None, f"{company_err} / {year_err}"
+    if not company:
+        return None, None, company_err
+    if not year:
+        return None, None, year_err
 
     return company, year, None
 
@@ -177,3 +209,59 @@ def import_xml_folder(source_folder: str, recursive: bool = False):
     print("Successfully placed & ingested:", success_count)
     print("Unsorted (company/year unclear):", unsorted_count)
     print("Skipped (already indexed, same hash):", skipped_count)
+
+
+def detect_metadata_from_pdf(file_path: Path) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Parses first few pages of PDF file to detect company and year.
+    Returns: (resolved_company, resolved_year, error_reason)
+    """
+    try:
+        import fitz
+        _ = fitz.Rect
+        HAS_FITZ = True
+    except (ImportError, AttributeError, Exception):
+        HAS_FITZ = False
+
+    extracted_text = ""
+    if HAS_FITZ:
+        try:
+            doc = fitz.open(str(file_path))
+            # Read up to 3 pages to find metadata quickly
+            for idx in range(min(3, len(doc))):
+                extracted_text += doc[idx].get_text()
+            doc.close()
+        except Exception as e:
+            return None, None, f"Failed to parse PDF: {str(e)}"
+    else:
+        # Fallback to pypdf
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(file_path))
+            for idx in range(min(3, len(reader.pages))):
+                extracted_text += reader.pages[idx].extract_text() or ""
+        except Exception as e:
+            return None, None, f"Failed to parse PDF with fallback: {str(e)}"
+
+    company_router = CompanyRouter()
+    resolved_companies, resolved_years = company_router.resolve_companies_and_years(extracted_text)
+    
+    # Try resolving from filename if incomplete
+    if not resolved_companies or not resolved_years:
+        fn_companies, fn_years = company_router.resolve_companies_and_years(file_path.name)
+        if not resolved_companies:
+            resolved_companies = fn_companies
+        if not resolved_years:
+            resolved_years = fn_years
+
+    if not resolved_companies and not resolved_years:
+        return None, None, "missing company name / missing year and undetected from filename"
+    if not resolved_companies:
+        return None, None, "missing company name and undetected from filename"
+    if not resolved_years:
+        return None, None, "missing year and undetected from filename"
+
+    if len(resolved_companies) > 1:
+        return None, None, f"ambiguous (multiple matches: {resolved_companies})"
+
+    return resolved_companies[0], resolved_years[0], None

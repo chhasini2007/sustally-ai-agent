@@ -1,5 +1,10 @@
-import streamlit as st
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import config
+
+import streamlit as st
 import shutil
 import time
 import uuid
@@ -7,6 +12,10 @@ import threading
 from datetime import datetime
 from pathlib import Path
 import plotly.io as pio
+from dotenv import load_dotenv
+
+# Load env variables
+load_dotenv()
 
 # Set Page Config
 st.set_page_config(
@@ -15,6 +24,65 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Authentication check
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+@st.dialog("🔒 Sign In / Sign Up")
+def login_dialog():
+    tab_login, tab_signup = st.tabs(["🔒 Log In", "📝 Sign Up"])
+    
+    with tab_login:
+        username = st.text_input("Username", key="dialog_username", placeholder="Enter username")
+        password = st.text_input("Password", type="password", key="dialog_password", placeholder="Enter password")
+        submitted = st.button("Sign In", key="dialog_login_submit", use_container_width=True)
+        if submitted:
+            from src.database.users_store import UsersStore
+            users_store = UsersStore()
+            expected_user = os.getenv("STREAMLIT_APP_USER")
+            expected_pass = os.getenv("STREAMLIT_APP_PASSWORD")
+            if not expected_user or not expected_pass:
+                expected_user = os.getenv("DEMO_USER", "admin")
+                expected_pass = os.getenv("DEMO_PASS", "sustally_secure_demo_pass_2026")
+            
+            auth_success = False
+            if username == expected_user and password == expected_pass:
+                auth_success = True
+                st.session_state["username"] = expected_user
+            elif users_store.authenticate_user(username, password):
+                auth_success = True
+                st.session_state["username"] = username
+                
+            if auth_success:
+                st.session_state["authenticated"] = True
+                st.session_state["auth_just_succeeded"] = True
+                st.toast("Access Granted!")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error("Invalid Username or Password.")
+    
+    with tab_signup:
+        new_username = st.text_input("Choose Username", key="dialog_signup_username", placeholder="Choose username")
+        new_password = st.text_input("Choose Password", type="password", key="dialog_signup_password", placeholder="Choose password")
+        confirm_password = st.text_input("Confirm Password", type="password", key="dialog_signup_confirm_password", placeholder="Confirm password")
+        registered = st.button("Register Account", key="dialog_signup_submit", use_container_width=True)
+        if registered:
+            if not new_username:
+                st.error("Username cannot be empty.")
+            elif len(new_password) < 8:
+                st.error("Password must be at least 8 characters long.")
+            elif new_password != confirm_password:
+                st.error("Passwords do not match.")
+            else:
+                from src.database.users_store import UsersStore
+                users_store = UsersStore()
+                success, msg = users_store.create_user(new_username, new_password)
+                if success:
+                    st.success("Account created successfully! Please switch to Log In tab to access your dashboard.")
+                else:
+                    st.error(msg)
 
 # Dark Theme CSS injection
 st.markdown("""
@@ -28,9 +96,43 @@ st.markdown("""
         color: #00E676 !important;
         font-family: 'Outfit', 'Inter', sans-serif;
     }
-    .stChatMessage {
-        border-radius: 12px;
-        margin-bottom: 12px;
+    
+    /* User right-aligned message bubble */
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]),
+    div[data-testid="stChatMessage"]:has(span[data-testid="stChatMessageAvatar"] img[src*="user"]) {
+        background-color: #1b261c !important; /* cute dark sage green */
+        border: 1px solid #273829 !important;
+        border-radius: 16px 16px 0px 16px !important;
+        margin-left: auto !important;
+        width: fit-content !important;
+        max-width: 80% !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    /* Assistant transparent message container */
+    div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]),
+    div[data-testid="stChatMessage"]:has(span[data-testid="stChatMessageAvatar"] img[src*="assistant"]),
+    div[data-testid="stChatMessage"]:has(span[data-testid="stChatMessageAvatar"]):not(:has(img[src*="user"])) {
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding-left: 0px !important;
+        padding-right: 0px !important;
+        margin-right: auto !important;
+        width: 100% !important;
+    }
+    
+    /* Animated Sprout Loader styling */
+    @keyframes sprout-pulse {
+        0% { opacity: 0.4; transform: scale(0.9); }
+        50% { opacity: 1; transform: scale(1.2); }
+        100% { opacity: 0.4; transform: scale(0.9); }
+    }
+    .sprout-loader {
+        display: inline-block;
+        animation: sprout-pulse 1s infinite ease-in-out;
+        margin-left: 4px;
+        font-size: 1.2em;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -40,11 +142,21 @@ import importlib
 import config.settings
 importlib.reload(config.settings)
 from config import settings
-from src.retrieval.query_classifier import QueryClassifier
+
+import src.retrieval.company_router
+importlib.reload(src.retrieval.company_router)
 from src.retrieval.company_router import CompanyRouter
+
+import src.retrieval.query_classifier
+importlib.reload(src.retrieval.query_classifier)
+from src.retrieval.query_classifier import QueryClassifier
+
+# Clear resource cache to ensure reloaded classes are used
+st.cache_resource.clear()
 from src.agents.qa_agent import QAAgent
 from src.agents.analysis_agent import AnalysisAgent
 from src.agents.comparison_agent import ComparisonAgent
+from src.agents.yoy_agent import YoYAgent
 from src.visualization.charts import create_comparison_chart
 from src.ingestion.document_manager import DocumentManager
 from src.database.metrics_store import MetricsStore
@@ -73,6 +185,10 @@ def get_comparison_agent():
     return ComparisonAgent()
 
 @st.cache_resource
+def get_yoy_agent():
+    return YoYAgent()
+
+@st.cache_resource
 def get_metrics_store():
     return MetricsStore()
 
@@ -90,12 +206,15 @@ router = get_company_router()
 qa_agent = get_qa_agent()
 analysis_agent = get_analysis_agent()
 comp_agent = get_comparison_agent()
+yoy_agent = get_yoy_agent()
 metrics_store = get_metrics_store()
 query_cache = get_query_cache()
 history_store = get_history_store()
 
 # Async message persistence helper
 def save_message_async(conv_id: int, role: str, content: str, lane: str = None, chart_id: int = None):
+    if st.session_state.get("username") is None or conv_id is None:
+        return
     def _save():
         store = HistoryStore()
         store.add_message(conv_id, role, content, lane, chart_id)
@@ -109,7 +228,8 @@ def load_conversation_messages(conversation_id: int):
     for m in db_msgs:
         msg = {
             "role": m["role"],
-            "content": m["content"]
+            "content": m["content"],
+            "lane": m["lane"]
         }
         if m["figure_json"]:
             try:
@@ -120,6 +240,31 @@ def load_conversation_messages(conversation_id: int):
                 msg["chart"] = None
         messages.append(msg)
     return messages
+
+def save_current_guest_conversation(username: str):
+    if not st.session_state.get("messages"):
+        return
+    
+    first_user_msg = "New Conversation"
+    for m in st.session_state["messages"]:
+        if m["role"] == "user":
+            first_user_msg = m["content"]
+            break
+    conv_title = first_user_msg
+    if len(conv_title) > 60:
+        conv_title = conv_title[:57] + "..."
+        
+    conv_id = history_store.create_conversation(st.session_state["session_id"], conv_title, username=username)
+    st.session_state["active_conversation_id"] = conv_id
+    
+    for m in st.session_state["messages"]:
+        history_store.add_message(
+            conversation_id=conv_id,
+            role=m["role"],
+            content=m["content"],
+            lane=m.get("lane"),
+            chart_id=m.get("chart_id")
+        )
 
 # Initialize session ID and active conversation ID
 if "session_id" not in st.session_state:
@@ -149,117 +294,468 @@ with st.sidebar:
     st.markdown("---")
     
     # New Chat Button
-    if st.button("➕ New Chat", use_container_width=True):
+    if st.button("➕ New Chat", type="primary", use_container_width=True):
         st.session_state["session_id"] = str(uuid.uuid4())
         st.session_state["active_conversation_id"] = None
         st.session_state["messages"] = []
         st.rerun()
         
+    # Clear Chat History Button
+    if st.button("🗑️ Clear Chat History", use_container_width=True):
+        history_store.clear_user_history(st.session_state.get("username"))
+        st.session_state["session_id"] = str(uuid.uuid4())
+        st.session_state["active_conversation_id"] = None
+        st.session_state["messages"] = []
+        st.toast("Chat history cleared!")
+        time.sleep(1)
+        st.rerun()
+        
     st.markdown("#### 💬 Past Chats")
-    conversations = history_store.get_conversations_list()
-    if conversations:
-        for c in conversations:
-            title = c["title"] or "New Conversation"
-            if len(title) > 32:
-                title = title[:29] + "..."
-            
-            is_current = (c["session_id"] == st.session_state["session_id"])
-            
-            dt_str = ""
-            if c["created_at"]:
-                try:
-                    dt_str = datetime.fromisoformat(c["created_at"]).strftime("%b %d, %H:%M")
-                except Exception:
-                    pass
-            
-            # visual indicator for current conversation
-            prefix = "👉 " if is_current else "💬 "
-            label = f"{prefix}{title}\n({dt_str})" if dt_str else f"{prefix}{title}"
-            
-            if st.button(label, key=f"conv_{c['id']}", disabled=is_current, use_container_width=True):
-                st.session_state["session_id"] = c["session_id"]
-                st.session_state["active_conversation_id"] = c["id"]
-                st.session_state["messages"] = load_conversation_messages(c["id"])
-                st.rerun()
+    if st.session_state.get("username") is None:
+        st.info("🕒 Temporary chat — sign in to save history")
     else:
-        st.caption("No past conversations.")
+        conversations = history_store.get_conversations_list(username=st.session_state.get("username"))
+        if conversations:
+            for c in conversations:
+                title = c["title"] or "New Conversation"
+                if len(title) > 32:
+                    title = title[:29] + "..."
+                
+                is_current = (c["session_id"] == st.session_state["session_id"])
+                
+                dt_str = ""
+                if c["created_at"]:
+                    try:
+                        dt_str = datetime.fromisoformat(c["created_at"]).strftime("%b %d, %H:%M")
+                    except Exception:
+                        pass
+                
+                # visual indicator for current conversation
+                prefix = "👉 " if is_current else "💬 "
+                label = f"{prefix}{title}\n({dt_str})" if dt_str else f"{prefix}{title}"
+                
+                if st.button(label, key=f"conv_{c['id']}", disabled=is_current, use_container_width=True):
+                    st.session_state["session_id"] = c["session_id"]
+                    st.session_state["active_conversation_id"] = c["id"]
+                    st.session_state["messages"] = load_conversation_messages(c["id"])
+                    st.rerun()
+        else:
+            st.caption("No past conversations.")
         
     st.markdown("---")
     
     # Database statistics
     st.markdown("#### 📊 Registered Companies")
-    companies_list_sidebar = router.get_known_companies()
-    if companies_list_sidebar:
-        for c in companies_list_sidebar:
-            years = metrics_store.get_company_years(c)
-            st.write(f"• {c} ({', '.join(years) if years else 'No data'})")
+    manager = DocumentManager()
+    manager.load_index()
+
+    st.markdown("#### 📁 Active Report")
+    from pathlib import Path
+    registered_files = list(manager.index.keys())
+    if registered_files:
+        options = ["None Selected"] + registered_files
+        def format_file_option(opt):
+            if opt == "None Selected":
+                return opt
+            entry = manager.index[opt]
+            comp = entry.get("company", "Unknown")
+            year = entry.get("year", "Unknown")
+            filename = Path(opt).name
+            return f"{comp} - {year} ({filename})"
+            
+        default_idx = 0
+        active_file = st.session_state.get("active_file")
+        if active_file in registered_files:
+            default_idx = registered_files.index(active_file) + 1
+            
+        selected_option = st.selectbox(
+            "Select active report",
+            options=options,
+            index=default_idx,
+            format_func=format_file_option,
+            label_visibility="collapsed"
+        )
+        
+        if selected_option != "None Selected":
+            st.session_state["active_file"] = selected_option
+            entry = manager.index[selected_option]
+            st.session_state["active_company"] = entry.get("company")
+            st.session_state["active_year"] = entry.get("year")
+        else:
+            st.session_state["active_file"] = None
+            st.session_state["active_company"] = None
+            st.session_state["active_year"] = None
+    else:
+        st.caption("No reports indexed yet.")
+        st.session_state["active_file"] = None
+        st.session_state["active_company"] = None
+        st.session_state["active_year"] = None
+        
+    st.markdown("---")
+    
+    company_tree = {}
+    for path, entry in manager.index.items():
+        comp = entry.get("company")
+        year = entry.get("year")
+        ftype = entry.get("file_type", "").upper()
+        if not comp or not year:
+            continue
+            
+        display_comp = comp
+        for alias, canonical in router.aliases.items():
+            if canonical == comp and len(alias) < len(display_comp):
+                display_comp = alias.upper()
+        
+        if display_comp.lower() == "tcs":
+            display_comp = "TCS"
+        elif display_comp.lower() == "infosys":
+            display_comp = "Infosys"
+        elif display_comp.lower() == "wipro":
+            display_comp = "Wipro"
+            
+        if display_comp not in company_tree:
+            company_tree[display_comp] = {}
+        if year not in company_tree[display_comp]:
+            company_tree[display_comp][year] = set()
+        if ftype:
+            company_tree[display_comp][year].add(ftype)
+            
+    if company_tree:
+        for comp, years_dict in sorted(company_tree.items()):
+            st.markdown(f"**{comp}**")
+            sorted_years = sorted(years_dict.keys())
+            for idx, yr in enumerate(sorted_years):
+                types_str = " + ".join(sorted(years_dict[yr]))
+                connector = "└── " if idx == len(sorted_years) - 1 else "├── "
+                st.markdown(f"<span style='font-family:monospace; font-size: 14px;'> &nbsp;{connector}{yr} ({types_str})</span>", unsafe_allow_html=True)
     else:
         st.caption("No companies registered yet.")
+        
+    if st.session_state.get("username") is not None:
+        st.markdown("---")
+        if st.button("🔒 Log Out", use_container_width=True):
+            st.session_state["authenticated"] = False
+            st.session_state["username"] = None
+            st.session_state["session_id"] = str(uuid.uuid4())
+            st.session_state["active_conversation_id"] = None
+            st.session_state["messages"] = []
+            st.rerun()
 
 # 2. MAIN PANEL — CENTERED LAYOUT
 left_spacer, main_col, right_spacer = st.columns([1, 3, 1])
 
 with main_col:
-    # Header row (Branding on left, engine status badge on right)
-    col_left, col_right = st.columns([3, 1])
+    col_left, col_middle, col_right = st.columns([4, 2, 1.5])
     with col_left:
         st.markdown("<h2 style='margin-bottom:0px; margin-top:0px;'>🌱 Sustally</h2><p style='color:#888; font-size:14px; margin-top:0px; margin-bottom:15px;'>AI Sustainability Intelligence</p>", unsafe_allow_html=True)
-    with col_right:
-        last_prov = st.session_state["last_provider"]
+    with col_middle:
+        active_prov = qa_agent.llm_router.get_active_provider()
         badge_html = ""
-        if "omniroute" in last_prov.lower():
-            badge_html = "<span style='background-color:#1E4620; color:#3CD070; padding:6px 12px; border-radius:12px; font-weight:bold; font-size:14px; display:inline-block;'>🟢 Engine: OmniRoute</span>"
-        elif "ollama" in last_prov.lower():
+        if "ollama" in active_prov.lower():
             badge_html = "<span style='background-color:#1B365D; color:#4E91F2; padding:6px 12px; border-radius:12px; font-weight:bold; font-size:14px; display:inline-block;'>🔵 Engine: Ollama</span>"
-        elif "unavailable" in last_prov.lower():
+        elif "openai" in active_prov.lower():
+            badge_html = "<span style='background-color:#10A37F; color:#FFFFFF; padding:6px 12px; border-radius:12px; font-weight:bold; font-size:14px; display:inline-block;'>🟢 Engine: OpenAI</span>"
+        elif "unavailable" in active_prov.lower():
             badge_html = "<span style='background-color:#5C1D1D; color:#F25C5C; padding:6px 12px; border-radius:12px; font-weight:bold; font-size:14px; display:inline-block;'>🔴 Engine: Unavailable</span>"
         else:
-            badge_html = f"<span style='background-color:#4A4A4A; color:#E0E0E0; padding:6px 12px; border-radius:12px; font-weight:bold; font-size:14px; display:inline-block;'>🟡 Engine: {last_prov}</span>"
+            badge_html = f"<span style='background-color:#4A4A4A; color:#E0E0E0; padding:6px 12px; border-radius:12px; font-weight:bold; font-size:14px; display:inline-block;'>🟡 Engine: {active_prov}</span>"
         st.markdown(f"<div style='text-align:right; margin-top:10px;'>{badge_html}</div>", unsafe_allow_html=True)
+    with col_right:
+        if not st.session_state.get("authenticated"):
+            if st.button("🔒 Sign In", key="top_right_signin_btn", use_container_width=True):
+                login_dialog()
+        else:
+            username = st.session_state.get("username")
+            st.markdown(f"<div style='text-align:right; margin-top:15px; font-weight:bold; color:#8FBC8F;'>👤 {username}</div>", unsafe_allow_html=True)
 
     st.markdown("Analyze corporate ESG reports, compare metrics, and generate charts instantly.")
     st.markdown("---")
 
+    # Guest conversation conversion banner
+    if st.session_state.get("auth_just_succeeded") and st.session_state.get("messages"):
+        with st.container(border=True):
+            st.markdown("💬 **Save this temporary guest conversation to your account?**")
+            col_save_yes, col_save_no = st.columns([1, 4])
+            with col_save_yes:
+                if st.button("💾 Yes, Save", use_container_width=True):
+                    save_current_guest_conversation(st.session_state["username"])
+                    st.session_state["auth_just_succeeded"] = False
+                    st.toast("Conversation saved successfully!")
+                    st.rerun()
+            with col_save_no:
+                if st.button("❌ No, Thanks", use_container_width=True):
+                    st.session_state["auth_just_succeeded"] = False
+                    st.rerun()
+
     # Welcome placeholder if conversation is empty
     if not st.session_state["messages"]:
-        st.info("👋 **Welcome to Sustally ESG Intelligence Portal!**\n\nAsk a question about greenhouse emissions, compare metrics between TCS and Infosys, or request a narrative report summary to get started.")
-
-    # Display chat messages
-    for msg in st.session_state["messages"]:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if "chart" in msg and msg["chart"] is not None:
-                st.plotly_chart(msg["chart"], use_container_width=True)
-                if msg.get("chart_reused"):
-                    st.caption(f"ℹ️ Showing previously generated chart — refreshed {msg.get('chart_refreshed_time')}")
+        st.write("")
+        st.write("")
+        st.write("")
+        st.write("")
+        st.markdown("<h3 style='text-align: center; color: #8FBC8F; font-family: Outfit, Inter, sans-serif;'>🌱 What would you like to know about your sustainability reports?</h3>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #888; font-size: 14px; margin-bottom: 25px;'>Ask a question, compare carbon footprints, or request a report summary.</p>", unsafe_allow_html=True)
+        
+        # Centered input card
+        with st.container(border=True):
+            query = st.text_area("Ask Sustally:", placeholder="Ask a question, compare companies, or request a report summary...", key="empty_state_input", height=100, label_visibility="collapsed")
+            col_spacer, col_btn = st.columns([5, 1])
+            with col_btn:
+                submit_clicked = st.button("🚀 Ask", use_container_width=True)
+                
+            if submit_clicked and query.strip():
+                st.session_state["pending_query"] = query.strip()
+                st.rerun()
+    else:
+        # Display chat messages
+        for idx, msg in enumerate(st.session_state["messages"]):
+            with st.chat_message(msg["role"]):
+                if msg.get("lane") in ("G", "GENERAL") and msg["role"] == "assistant":
+                    st.markdown("<div style='margin-bottom: 8px;'><span style='background-color: #3e2723; color: #ffb74d; padding: 4px 8px; border-radius: 4px; font-size: 0.85em; font-weight: bold; border: 1px solid #e5a93b;'>⚠️ General knowledge — not from your uploaded reports</span></div>", unsafe_allow_html=True)
+                st.markdown(msg["content"])
+                if "chart" in msg and msg["chart"] is not None:
+                    st.plotly_chart(msg["chart"], use_container_width=True)
+                    if msg.get("chart_reused"):
+                        st.caption(f"ℹ️ Showing previously generated chart — refreshed {msg.get('chart_refreshed_time')}")
+                
+                # Copy Response Action under assistant messages
+                if msg["role"] == "assistant":
+                    copy_text = msg["content"]
+                    if st.button("📋 Copy", key=f"copy_btn_{idx}", help="Copy response to clipboard"):
+                        import subprocess
+                        try:
+                            subprocess.run("clip", input=copy_text.encode("utf-16"), check=True)
+                            st.toast("Copied response to clipboard!")
+                        except Exception as e:
+                            st.error(f"Copy failed: {e}")
 
     # File Uploader Expander
     with st.expander("📤 Ingest New Sustainability Report (PDF/XML)", expanded=False):
-        uploaded_file = st.file_uploader("Choose report file", type=["pdf", "xml"], label_visibility="collapsed")
-        if uploaded_file:
-            st.write("##### Associate metadata:")
-            company_input = st.text_input("Company Name (e.g. Infosys Limited)").strip()
-            year_input = st.text_input("Report Year (e.g. 2024)").strip()
+        uploaded_files = st.file_uploader("Choose report files", type=["pdf", "xml"], accept_multiple_files=True, label_visibility="collapsed")
+        if uploaded_files:
+            # Check if there is any PDF file uploaded
+            has_pdf = any(f.name.lower().endswith(".pdf") for f in uploaded_files)
             
+            company_input = ""
+            year_input = ""
+            if has_pdf:
+                st.write("##### Associate metadata for PDF reports:")
+                company_input = st.text_input("Company Name (e.g. Infosys Limited)").strip()
+                year_input = st.text_input("Report Year (e.g. 2024)").strip()
+                
             if st.button("Process & Ingest"):
-                if not company_input or not year_input:
-                    st.error("Please provide both Company Name and Year.")
+                import hashlib
+                if has_pdf and (not company_input or not year_input):
+                    st.error("Please provide both Company Name and Year for PDF reports.")
                 else:
-                    target_dir = Path(settings.RAW_DIR) / company_input / year_input
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    target_path = target_dir / uploaded_file.name
+                    newly_placed_files = []
+                    processed_xml_count = 0
+                    skipped_xml_count = 0
+                    errors = []
                     
-                    with open(target_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
+                    temp_dir = Path("temp_ingest")
+                    temp_dir.mkdir(exist_ok=True)
+                    
+                    manager = DocumentManager()
+                    manager.load_index()
+                    
+                    for uploaded_file in uploaded_files:
+                        file_bytes = uploaded_file.getvalue()
+                        file_hash = hashlib.sha256(file_bytes).hexdigest()
                         
-                    with st.spinner("Ingesting report asynchronously..."):
-                        manager = DocumentManager()
-                        result = manager.ingest_new_reports()
-                        st.success(f"Successfully processed: {result['message']}")
-                        st.rerun()
+                        # Check if already indexed
+                        is_indexed = False
+                        for path, val in manager.index.items():
+                            if val.get("file_hash") == file_hash:
+                                is_indexed = True
+                                break
+                                
+                        if is_indexed:
+                            if uploaded_file.name.lower().endswith(".xml"):
+                                skipped_xml_count += 1
+                            continue
+                            
+                        if uploaded_file.name.lower().endswith(".xml"):
+                            temp_path = temp_dir / uploaded_file.name
+                            with open(temp_path, "wb") as f:
+                                f.write(file_bytes)
+                                
+                            from src.ingestion.bulk_xml_importer import detect_metadata_from_xml, get_unique_filename
+                            company, year, error_reason = detect_metadata_from_xml(temp_path)
+                            
+                            # Clean up temp file
+                            if temp_path.exists():
+                                os.remove(temp_path)
+                                
+                            if error_reason:
+                                errors.append(f"Could not parse {uploaded_file.name}: {error_reason}")
+                                continue
+                                
+                            st.session_state["active_company"] = company
+                            st.session_state["active_year"] = year
+                            
+                            target_dir = Path(settings.RAW_DIR) / company / year
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            target_path = get_unique_filename(target_dir, uploaded_file.name)
+                            
+                            with open(target_path, "wb") as f:
+                                f.write(file_bytes)
+                                
+                            newly_placed_files.append(str(target_path))
+                            processed_xml_count += 1
+                        else:
+                            # PDF report
+                            target_dir = Path(settings.RAW_DIR) / company_input / year_input
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            target_path = target_dir / uploaded_file.name
+                            
+                            with open(target_path, "wb") as f:
+                                f.write(file_bytes)
+                                
+                            newly_placed_files.append(str(target_path))
+                            resolved_comps, _ = router.resolve_companies_and_years(company_input)
+                            st.session_state["active_company"] = resolved_comps[0] if resolved_comps else company_input
+                            st.session_state["active_year"] = year_input
+                            
+                    # Clean up temp dir if empty
+                    if temp_dir.exists():
+                        try:
+                            temp_dir.rmdir()
+                        except Exception:
+                            pass
+                            
+                    if errors:
+                        for err in errors:
+                            st.error(err)
+                            
+                    if newly_placed_files:
+                        with st.spinner("Ingesting reports asynchronously..."):
+                            result = manager.ingest_new_reports(target_files=newly_placed_files)
+                            if processed_xml_count > 0:
+                                st.success("XML files indexed successfully.")
+                            st.success("Report indexed successfully.")
+                            time.sleep(2)
+                            st.rerun()
+                    else:
+                        if processed_xml_count == 0 and skipped_xml_count > 0:
+                            st.info("Uploaded XML files were already indexed (skipped).")
+                            time.sleep(2)
+                            st.rerun()
+                        elif not errors:
+                            st.warning("No files were processed.")
 
-    # User Query input (rendered within main column)
-    query = st.chat_input("Ask a question, compare companies, or request a report summary...")
+    # Bulk Import Expander
+    with st.expander("📁 Bulk Import ESG Reports", expanded=False):
+        import_path_str = st.text_input("Root folder path (e.g. ESG_Reports/)", key="bulk_import_folder_path").strip()
+        if st.button("Start Bulk Import"):
+            if not import_path_str:
+                st.error("Please enter a valid folder path.")
+            else:
+                import_path = Path(import_path_str)
+                if not import_path.exists() or not import_path.is_dir():
+                    st.error("Provided path does not exist or is not a directory.")
+                else:
+                    status_container = st.empty()
+                    
+                    status_container.info("Scanning folders...")
+                    time.sleep(0.5)
+                    
+                    all_scanned_files = []
+                    pdf_files = []
+                    xml_files = []
+                    for root_dir, dirs, files in os.walk(import_path):
+                        for f in files:
+                            f_path = Path(root_dir) / f
+                            all_scanned_files.append(f_path)
+                            if f.lower().endswith(".pdf"):
+                                pdf_files.append(f_path)
+                            elif f.lower().endswith(".xml"):
+                                xml_files.append(f_path)
+                                
+                    status_container.info("Parsing XML...")
+                    time.sleep(0.5)
+                    
+                    status_container.info("Parsing PDF...")
+                    time.sleep(0.5)
+                    
+                    status_container.info("Generating embeddings...")
+                    time.sleep(0.5)
+                    
+                    status_container.info("Updating vector database...")
+                    
+                    import hashlib
+                    from src.ingestion.bulk_xml_importer import detect_metadata_from_xml, detect_metadata_from_pdf
+                    
+                    newly_placed_files = []
+                    indexed_count = 0
+                    skipped_count = 0
+                    
+                    manager = DocumentManager()
+                    manager.load_index()
+                    
+                    for file_path in pdf_files + xml_files:
+                        try:
+                            with open(file_path, "rb") as f:
+                                file_bytes = f.read()
+                            file_hash = hashlib.sha256(file_bytes).hexdigest()
+                            
+                            is_duplicate_hash = False
+                            for p_key, val in manager.index.items():
+                                if val.get("file_hash") == file_hash:
+                                    is_duplicate_hash = True
+                                    break
+                                    
+                            if is_duplicate_hash:
+                                skipped_count += 1
+                                continue
+                                
+                            if file_path.suffix.lower() == ".xml":
+                                company, year, error_reason = detect_metadata_from_xml(file_path)
+                            else:
+                                company, year, error_reason = detect_metadata_from_pdf(file_path)
+                                
+                            if error_reason:
+                                continue
+                                
+                            target_dir = Path(settings.RAW_DIR) / company / year
+                            target_path = target_dir / file_path.name
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            with open(target_path, "wb") as f:
+                                f.write(file_bytes)
+                                
+                            newly_placed_files.append(str(target_path))
+                            indexed_count += 1
+                            
+                        except Exception as e:
+                            pass
+                            
+                    if newly_placed_files:
+                        manager.ingest_new_reports(target_files=newly_placed_files)
+                        st.session_state["active_company"] = company
+                        st.session_state["active_year"] = year
+                        
+                    status_container.success("Completed.")
+                    time.sleep(1)
+                    status_container.empty()
+                    
+                    st.markdown("### 📊 Import Summary")
+                    st.write(f"- **Files scanned**: {len(all_scanned_files)}")
+                    st.write(f"- **PDF files**: {len(pdf_files)}")
+                    st.write(f"- **XML files**: {len(xml_files)}")
+                    st.write(f"- **New reports indexed**: {indexed_count}")
+                    st.write(f"- **Duplicates skipped**: {skipped_count}")
+                    
+                    time.sleep(4)
+                    st.rerun()
+
+    # Intercept pending query from centered input, or get from bottom chat input
+    query = None
+    if "pending_query" in st.session_state and st.session_state["pending_query"]:
+        query = st.session_state["pending_query"]
+        st.session_state["pending_query"] = None
+    elif st.session_state["messages"]:
+        query = st.chat_input("Ask a question, compare companies, or request a report summary...")
 
     if query:
         # Show user message
@@ -267,39 +763,128 @@ with main_col:
             st.markdown(query)
         
         # Resolve or create conversation
-        # Resolve or create conversation
-        if st.session_state["active_conversation_id"] is not None:
-            conv_id = st.session_state["active_conversation_id"]
-        else:
-            is_first_msg = (len(st.session_state["messages"]) == 0)
-            if is_first_msg:
-                conv_title = query
-                if len(conv_title) > 60:
-                    conv_title = conv_title[:57] + "..."
-                conv_id = history_store.create_conversation(st.session_state["session_id"], conv_title)
+        if st.session_state.get("username") is not None:
+            if st.session_state["active_conversation_id"] is not None:
+                conv_id = st.session_state["active_conversation_id"]
             else:
-                conv_id = history_store.get_conversation_by_session(st.session_state["session_id"])
-                if conv_id is None:
-                    conv_id = history_store.create_conversation(st.session_state["session_id"], "New Conversation")
+                is_first_msg = (len(st.session_state["messages"]) == 0)
+                if is_first_msg:
+                    conv_title = query
+                    if len(conv_title) > 60:
+                        conv_title = conv_title[:57] + "..."
+                    conv_id = history_store.create_conversation(st.session_state["session_id"], conv_title, username=st.session_state.get("username"))
+                else:
+                    conv_id = history_store.get_conversation_by_session(st.session_state["session_id"])
+                    if conv_id is None:
+                        conv_id = history_store.create_conversation(st.session_state["session_id"], "New Conversation", username=st.session_state.get("username"))
             st.session_state["active_conversation_id"] = conv_id
+        else:
+            conv_id = None
                 
         st.session_state["messages"].append({"role": "user", "content": query})
         save_message_async(conv_id, "user", query)
         
         # Query Classification & Routing
-        classification = classifier.classify(query)
+        classification = classifier.classify(
+            query, 
+            conversation_context=st.session_state.get("messages", []),
+            active_company=st.session_state.get("active_company")
+        )
+        
+        if classification["status"] == "conversational":
+            qu = classification.get("question_understanding", {})
+            cat = qu.get("conversational_category", "greeting")
+            if cat == "greeting":
+                response = "Hi! Ask me anything about the sustainability reports in the database — company metrics, comparisons, trends, or summaries."
+            elif cat == "thanks":
+                response = "You're welcome! Let me know if you have any other questions about the sustainability reports."
+            else: # meta
+                response = (
+                    "I am Sustally, an AI assistant for corporate sustainability (ESG) report analysis. "
+                    "You can ask me questions about the sustainability reports in the database, including company metrics, comparisons, trends, or summaries."
+                )
+            with st.chat_message("assistant"):
+                st.markdown(response)
+            st.session_state["messages"].append({"role": "assistant", "content": response})
+            save_message_async(conv_id, "assistant", response, lane="CONVERSATIONAL")
+            st.rerun()
+
+        if classification["status"] == "out_of_scope":
+            response = "I can only answer questions based on the uploaded sustainability reports. Could you rephrase your question to relate to a specific company or report?"
+            with st.chat_message("assistant"):
+                st.markdown(response)
+            st.session_state["messages"].append({"role": "assistant", "content": response})
+            save_message_async(conv_id, "assistant", response, lane="OUT_OF_SCOPE")
+            st.rerun()
+            
+        if classification["status"] == "system_help":
+            response = (
+                "### About Sustally\n\n"
+                "Sustally is an AI-powered Sustainability Report Analysis Agent designed to analyze corporate sustainability (ESG) reports for Indian companies. "
+                "All answers are strictly grounded in the uploaded sustainability reports.\n\n"
+                "**Key Capabilities:**\n"
+                "1. **Structured ESG Metric Lookup (Lane A)**: Retrieve precise numeric data (such as emissions, energy/water usage) directly from indexed reports.\n"
+                "2. **Narrative Q&A (Lane B)**: Ask details about strategy, policies, and targets which are answered using retrieval-augmented generation (RAG).\n"
+                "3. **Company Comparison (Lane C)**: Compare ESG metrics across multiple companies with dynamically generated charts.\n"
+                "4. **Trend Analysis (Lane D)**: Visualize year-over-year sustainability trends for a company.\n\n"
+                "Please query me about a specific company or report (e.g., 'Summarize Infosys water strategy' or 'Compare Scope 1 emissions of TCS and Infosys')."
+            )
+            with st.chat_message("assistant"):
+                st.markdown(response)
+            st.session_state["messages"].append({"role": "assistant", "content": response})
+            save_message_async(conv_id, "assistant", response, lane="SYSTEM_HELP")
+            st.rerun()
+            
+        if classification["status"] == "missing_company" and st.session_state.get("active_company"):
+            classification["status"] = "ok"
+            classification["companies"] = [st.session_state["active_company"]]
+            if st.session_state.get("active_year"):
+                classification["years"] = [st.session_state["active_year"]]
+            
+            # Reclassify lane mapping based on the resolved company
+            qu_intent = classification.get("question_understanding", {}).get("intent", "narrative")
+            intent_map = {
+                "lookup": "A",
+                "narrative": "B",
+                "comparison": "C",
+                "trend": "D",
+                "ranking": "E",
+                "general": "G"
+            }
+            if len(classification["companies"]) >= 2:
+                classification["lane"] = "C"
+            else:
+                classification["lane"] = intent_map.get(qu_intent, "B")
+                
         lane = classification["lane"]
         comps = classification["companies"]
         years = classification["years"]
         metric_key = classification["metric_key"]
         
-        # Handle missing company warning
-        if classification["status"] == "missing_company":
-            response = "Which company would you like me to analyze? Please specify the company name (e.g. TCS, Infosys)."
+        # Handle missing/ambiguous/unresolved company warning
+        if classification["status"] in ("missing_company", "ambiguous", "unresolved"):
+            status = classification["status"]
+            matched_term = classification["matched_term"]
+            
+            if status == "ambiguous":
+                matches_list = ", ".join(classification["matches"])
+                response = (
+                    f"I found multiple companies matching '{matched_term}' in the database: {matches_list}. "
+                    f"Did you mean one of these, or a different {matched_term} company not yet in the database?"
+                )
+            elif status == "unresolved":
+                response = (
+                    f"I couldn't match '{matched_term}' to a specific company in the database. "
+                    f"Did you mean Tata Consultancy Services Limited (TCS)? Please specify the exact company name."
+                )
+            else:
+                response = "Please select a company/report first."
+                
             with st.chat_message("assistant"):
                 st.markdown(response)
             st.session_state["messages"].append({"role": "assistant", "content": response})
             save_message_async(conv_id, "assistant", response, lane=None)
+            st.rerun()
         else:
             # Check cache
             cache_comp = comps[0] if comps else "all"
@@ -333,6 +918,26 @@ with main_col:
                                 full_response = "No companies registered in the database yet. Please upload reports via the sidebar."
                             message_placeholder.markdown(full_response)
                             provider_name = "direct_lookup"
+                        elif metric_key == "list_xml_reports":
+                            manager = DocumentManager()
+                            manager.load_index()
+                            xml_files = [val for val in manager.index.values() if val.get("file_type") == "xml"]
+                            if xml_files:
+                                full_response = "Here are the indexed XML reports in Sustally:\n" + "\n".join([f"- {x['company']} ({x['year']}): {x['file_name']}" for x in xml_files])
+                            else:
+                                full_response = "No XML reports registered in the database yet."
+                            message_placeholder.markdown(full_response)
+                            provider_name = "direct_lookup"
+                        elif metric_key == "list_xml_metrics":
+                            db_metrics = metrics_store.get_xml_metrics()
+                            if db_metrics:
+                                full_response = "The following ESG metrics are available from XML reports:\n"
+                                for m in db_metrics:
+                                    full_response += f"- **{m['company']} ({m['year']})**: {m['metric_key']} ({m['metric_label']}) = {m['value']} {m['unit']}\n"
+                            else:
+                                full_response = "No ESG metrics available from XML reports."
+                            message_placeholder.markdown(full_response)
+                            provider_name = "direct_lookup"
                         else:
                             st.caption("Lane A: Structured Lookup (DB)")
                             t_start = time.time()
@@ -344,7 +949,7 @@ with main_col:
                                 gen, provider_name, _ = qa_agent.run_lane_a(target_comp, target_year, metric_key, query, stream=True)
                                 for token in gen:
                                     full_response += token
-                                    message_placeholder.markdown(full_response + "▌")
+                                    message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
                             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                                 full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
                                 provider_name = "unavailable"
@@ -354,8 +959,11 @@ with main_col:
                             message_placeholder.markdown(full_response)
                             st.session_state["last_provider"] = provider_name
                             
-                    elif lane == "C":
-                        st.caption("Lane C: Comparison Engine (Structured + Visual)")
+                    elif lane == "C" or lane == "E":
+                        if lane == "E":
+                            st.caption("Lane E: Ranking Engine")
+                        else:
+                            st.caption("Lane C: Comparison Engine (Structured + Visual)")
                         t_start = time.time()
                         
                         chart_metric = metric_key if metric_key else "scope1_emissions_tco2e"
@@ -378,7 +986,47 @@ with main_col:
                         try:
                             for token in gen:
                                 full_response += token
-                                message_placeholder.markdown(full_response + "▌")
+                                message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
+                        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                            full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
+                            provider_name = "unavailable"
+                            
+                        t_end = time.time()
+                        full_response += f"\n\n*(Query completed in {t_end - t_start:.2f}s using {provider_name})*"
+                        message_placeholder.markdown(full_response)
+                        st.session_state["last_provider"] = provider_name
+                        
+                    elif lane == "D":
+                        st.caption("Lane D: Year-over-Year Trend Analysis")
+                        t_start = time.time()
+                        target_comp = comps[0]
+                        
+                        full_response, fig, is_reused, refreshed_time, chart_id = yoy_agent.compare_years(
+                            company=target_comp,
+                            metric_key=metric_key,
+                            years=years
+                        )
+                        
+                        if fig:
+                            chart_placeholder.plotly_chart(fig, use_container_width=True)
+                            if is_reused:
+                                st.caption(f"ℹ️ Showing previously generated chart — refreshed {refreshed_time}")
+                                
+                        t_end = time.time()
+                        full_response += f"\n\n*(Query completed in {t_end - t_start:.2f}s using Python calculated engine)*"
+                        message_placeholder.markdown(full_response)
+                        st.session_state["last_provider"] = "python_calc"
+                        
+                    elif lane == "G":
+                        st.caption("Lane G: General Assistant")
+                        t_start = time.time()
+                        
+                        import requests
+                        try:
+                            gen, provider_name, _ = qa_agent.run_lane_g(query, stream=True)
+                            for token in gen:
+                                full_response += token
+                                message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
                         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                             full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
                             provider_name = "unavailable"
@@ -391,19 +1039,23 @@ with main_col:
                     else:
                         st.caption("Lane B: Narrative RAG")
                         t_start = time.time()
-                        target_comp = comps[0]
+                        target_comp = comps[0] if comps else None
                         target_year = years[0] if years else None
                         
-                        if any(w in query.lower() for w in ["summarize", "summary", "overview"]):
+                        is_deep_dive = False
+                        if "question_understanding" in classification:
+                            is_deep_dive = classification["question_understanding"].get("is_deep_dive", False)
+                        
+                        if target_comp and any(w in query.lower() for w in ["summarize", "summary", "overview"]):
                             gen, provider_name = analysis_agent.summarize_report(target_comp, target_year, stream=True)
                         else:
-                            gen, provider_name, _ = qa_agent.run_lane_b(target_comp, target_year, query, stream=True)
+                            gen, provider_name, _ = qa_agent.run_lane_b(target_comp, target_year, query, stream=True, is_deep_dive=is_deep_dive)
                             
                         import requests
                         try:
                             for token in gen:
                                 full_response += token
-                                message_placeholder.markdown(full_response + "▌")
+                                message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
                         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
                             full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
                             provider_name = "unavailable"
@@ -422,7 +1074,9 @@ with main_col:
                         "content": full_response,
                         "chart": fig,
                         "chart_reused": is_reused,
-                        "chart_refreshed_time": refreshed_time
+                        "chart_refreshed_time": refreshed_time,
+                        "lane": lane,
+                        "chart_id": chart_id
                     })
                     save_message_async(conv_id, "assistant", full_response, lane=lane, chart_id=chart_id)
                     st.rerun()

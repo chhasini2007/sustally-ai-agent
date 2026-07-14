@@ -64,17 +64,73 @@ METRIC_TAXONOMY = {
             r"share\s*of\s*renewable\s*energy"
         ]
     },
-    "women_workforce_pct": {
-        "label": "Women in Workforce",
+    "female_employee_headcount_share_pct": {
+        "label": "Female Employee Headcount Share",
         "unit": "%",
         "synonyms": [
-            "women in workforce", "percentage of women", "female employees percentage", 
+            "female employee headcount share", "percentage of female employees", "female employee share", 
+            "how many female employees", "percentage of women employees", "percentage of women", 
             "female representation", "women representation", "women workforce percentage", 
-            "gender diversity", "female employees", "women employees"
+            "gender diversity", "female employees", "women employees", "women in workforce"
         ],
         "patterns": [
-            r"women\s*(?:in|workforce|employees|representation|pct|percentage)?",
-            r"female\s*(?:employees|representation|pct|percentage|workforce)?"
+            r"female\s*employee\s*(?:share|percentage|pct)",
+            r"percentage\s*of\s*female\s*employees",
+            r"women\s*workforce\s*(?:share|percentage|pct)",
+            r"female\s*representation",
+            r"women\s*representation",
+            r"female\s*employees\s*headcount",
+            r"number\s*of\s*female\s*employees",
+            r"female\s*employees",
+            r"women\s*employees",
+            r"women\s*in\s*workforce"
+        ]
+    },
+    "female_employee_count": {
+        "label": "Female Employee Headcount",
+        "unit": "employees",
+        "synonyms": [
+            "female employee count", "female employee headcount", "number of female employees",
+            "how many women employees", "number of women employees", "total female employees",
+            "count of female employees",
+            "averagenumberoffemaleemployeesorworkersatthebeginningoftheyearandasatendoftheyear",
+            "numberoffemaleemployeesorworkers"
+        ],
+        "patterns": [
+            r"number\s*of\s*female\s*employees(?!\s*wage|\s*share|\s*percentage|\s*pct)",
+            r"female\s*employees\s*count",
+            r"female\s*employees\s*headcount"
+        ]
+    },
+    "total_employee_count": {
+        "label": "Total Employee Headcount",
+        "unit": "employees",
+        "synonyms": [
+            "total employee count", "total employee headcount", "number of total employees",
+            "total employees", "total headcount", "how many total employees",
+            "count of total employees"
+        ],
+        "patterns": [
+            r"total\s*(?:employee|workforce|staff)\s*(?:count|headcount|number)",
+            r"number\s*of\s*total\s*employees",
+            r"total\s*employees"
+        ]
+    },
+    "female_employee_wage_share_pct": {
+        "label": "Female Employee Wage Share",
+        "unit": "%",
+        "synonyms": [
+            "female employee wage share", "wages paid to female employees", "percentage of gross wages paid to female employees to total wages", 
+            "female employee wage percentage", "female wage share", "gross wages paid to female as % of total wages", 
+            "gross wages paid to female to total wages paid", "percentageofgrosswagespaidtofemaletototalwagespaid",
+            "grosswagespaidtofemale"
+        ],
+        "patterns": [
+            r"wages?\s*paid\s*to\s*female\s*employees",
+            r"female\s*employee\s*wage\s*(?:share|percentage|pct)",
+            r"percentage\s*of\s*gross\s*wages?\s*paid\s*to\s*female",
+            r"wages?\s*paid\s*to\s*female",
+            r"female\s*wage\s*share"
         ]
     },
     "waste_generation_tonnes": {

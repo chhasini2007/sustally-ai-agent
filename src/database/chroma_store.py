@@ -49,7 +49,10 @@ class ChromaStore:
             filters = []
             for k, v in filter_metadata.items():
                 if v is not None:
-                    filters.append({k: {"$eq": v}})
+                    if isinstance(v, dict):
+                        filters.append({k: v})
+                    else:
+                        filters.append({k: {"$eq": v}})
             
             if len(filters) == 1:
                 where_clause = filters[0]

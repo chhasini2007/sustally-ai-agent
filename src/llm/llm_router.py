@@ -1,67 +1,73 @@
 import logging
 import requests
-from typing import Generator, Dict, List, Tuple
+from typing import Generator, Dict, List, Tuple, Optional
 from config import settings
-from src.llm.omniroute_client import OmniRouteClient
 from src.llm.ollama_client import OllamaClient
-from src.llm.grok_client import GrokClient
+from src.llm.openai_client import OpenAIClient
 
 logger = logging.getLogger(__name__)
 
 class LLMRouter:
+    _active_provider = None
+    _last_configured = None
+
     def __init__(self):
-        self.omniroute = OmniRouteClient()
         self.ollama = OllamaClient()
-        self.grok = GrokClient()
+        self.openai = OpenAIClient()
         
-    def generate(self, messages: List[Dict[str, str]], stream: bool = True) -> Tuple[Generator[str, None, None], str]:
+    def get_active_provider(self) -> str:
+        """
+        Returns the active/configured LLM provider.
+        Tracks changes in the settings.LLM_PROVIDER configuration.
+        """
+        configured = settings.LLM_PROVIDER.strip()
+        if LLMRouter._last_configured != configured:
+            LLMRouter._last_configured = configured
+            if configured.lower() == "ollama":
+                LLMRouter._active_provider = "Ollama"
+            elif configured.lower() == "openai":
+                LLMRouter._active_provider = "OpenAI"
+            else:
+                LLMRouter._active_provider = configured
+        return LLMRouter._active_provider
+        
+    def generate(self, messages: List[Dict[str, str]], stream: bool = True, max_tokens: Optional[int] = None) -> Tuple[Generator[str, None, None], str]:
         """
         Attempts to query LLM provider based on config.
-        If LLM_PROVIDER is 'omniroute', tries OmniRoute first, then falls back to Ollama.
         If LLM_PROVIDER is 'ollama', queries Ollama directly.
-        If LLM_PROVIDER is 'grok', queries Grok directly.
+        If LLM_PROVIDER is 'openai', queries OpenAI directly.
         Returns a tuple: (content_generator, active_provider_name)
         """
         provider = settings.LLM_PROVIDER.strip().lower()
-        if provider not in ("ollama", "omniroute", "grok"):
+        if provider not in ("ollama", "openai"):
             logger.warning(f"Unknown LLM_PROVIDER configured: '{settings.LLM_PROVIDER}'. Using 'ollama' as default fallback.")
             provider = "ollama"
         
-        def error_generator() -> Generator[str, None, None]:
-            yield "⚠️ Neither OmniRoute nor Ollama is reachable right now. Please start one of the LLM services and try again."
-
-        omni_timeout = (settings.OMNIROUTE_CONNECT_TIMEOUT, settings.OMNIROUTE_READ_TIMEOUT)
+        def ollama_error_generator() -> Generator[str, None, None]:
+            yield "⚠️ Ollama is not reachable right now. Please start the Ollama service and try again."
+ 
         ollama_timeout = (settings.OLLAMA_CONNECT_TIMEOUT, settings.OLLAMA_READ_TIMEOUT)
-        grok_timeout = (settings.GROK_CONNECT_TIMEOUT, settings.GROK_READ_TIMEOUT)
-
-        if provider == "omniroute":
+        openai_timeout = (settings.OPENAI_CONNECT_TIMEOUT, settings.OPENAI_READ_TIMEOUT)
+ 
+        if provider == "openai":
             try:
-                # Test connection / fast call
-                generator = self.omniroute.generate(messages, stream=stream, timeout=omni_timeout)
-                return generator, "omniroute"
+                # Direct OpenAI call
+                generator = self.openai.generate(messages, stream=stream, timeout=openai_timeout, max_tokens=max_tokens)
+                LLMRouter._active_provider = "OpenAI"
+                return generator, "openai"
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                logger.warning(f"OmniRoute failed (exception: {type(e).__name__}). Falling back to Ollama.")
-                try:
-                    generator = self.ollama.generate(messages, stream=stream, timeout=ollama_timeout)
-                    return generator, "ollama (fallback)"
-                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as fallback_err:
-                    logger.warning(f"Fallback Ollama also failed (exception: {type(fallback_err).__name__}).")
-                    return error_generator(), "unavailable"
-        elif provider == "grok":
-            try:
-                # Direct Grok call
-                generator = self.grok.generate(messages, stream=stream, timeout=grok_timeout)
-                return generator, "grok"
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                logger.warning(f"Grok failed (exception: {type(e).__name__}).")
-                def grok_error_generator() -> Generator[str, None, None]:
-                    yield "⚠️ Grok API is not reachable right now. Please check your GROK_API_KEY and network connection."
-                return grok_error_generator(), "unavailable"
+                logger.warning(f"OpenAI failed (exception: {type(e).__name__}).")
+                def openai_error_generator() -> Generator[str, None, None]:
+                    yield "⚠️ OpenAI API is not reachable right now. Please check your OPENAI_API_KEY and network connection."
+                LLMRouter._active_provider = "Unavailable"
+                return openai_error_generator(), "unavailable"
         else:
             try:
                 # Direct Ollama call
-                generator = self.ollama.generate(messages, stream=stream, timeout=ollama_timeout)
+                generator = self.ollama.generate(messages, stream=stream, timeout=ollama_timeout, max_tokens=max_tokens)
+                LLMRouter._active_provider = "Ollama"
                 return generator, "ollama"
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 logger.warning(f"Ollama failed (exception: {type(e).__name__}).")
-                return error_generator(), "unavailable"
+                LLMRouter._active_provider = "Unavailable"
+                return ollama_error_generator(), "unavailable"
