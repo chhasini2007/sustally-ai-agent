@@ -33,6 +33,17 @@ class RetrievalAgent:
         if plan.retrieval_strategy in ["HYBRID_METRIC_NARRATIVE", "NARRATIVE_VECTOR_ONLY"]:
             narrative_chunks = self._retrieve_narrative_chunks(plan)
 
+        # Fallback to vector search if structured database lookup yielded 0 metrics
+        if not structured_metrics and not narrative_chunks:
+            logger.info("Structured SQL search returned 0 metrics. Attempting semantic vector search fallback.")
+            narrative_chunks = self._retrieve_narrative_chunks(plan)
+
+        logger.info(
+            f"Retrieval complete: resolved_companies={plan.companies}, resolved_years={plan.years}, "
+            f"resolved_metrics={plan.metric_keys}. "
+            f"SQL rows found={len(structured_metrics)}, Vector chunks retrieved={len(narrative_chunks)}"
+        )
+
         return {
             "plan": plan,
             "structured_metrics": structured_metrics,

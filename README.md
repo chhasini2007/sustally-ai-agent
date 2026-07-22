@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Sustally ESG Intelligence Platform 
 
 **Sustally** is an enterprise-grade, AI-powered ESG (Environmental, Social, and Governance) intelligence dashboard designed to ingest, process, and analyze Business Responsibility and Sustainability Reports (BRSR) of public and private companies.
@@ -87,7 +86,7 @@ cd sustally
 # Initialize virtual environment and install packages
 python -m venv .venv
 source .venv/bin/activate  # Or .venv\Scripts\Activate.ps1 on Windows
-pip install -r requirements.txt
+pip install -r requirements-local.txt
 ```
 
 ### 2. Configure Credentials
@@ -163,7 +162,7 @@ Try the following questions in the dashboard query box:
 
 ## ☁️ Vercel Cloud Deployment
 
-Sustally is fully configured for serverless deployment on **Vercel** with a **Next.js frontend** and a **FastAPI backend**.
+Sustally is fully configured for serverless deployment on **Vercel** with a **Next.js frontend** and a **FastAPI backend** (optimized for the 500 MB function limits by splitting dependencies and excluding large report databases).
 
 ### Deployment Steps:
 1. **Push code to GitHub**: Create a repository and push your project files.
@@ -172,9 +171,11 @@ Sustally is fully configured for serverless deployment on **Vercel** with a **Ne
    - Set the Framework Preset to **Next.js** (Vercel will auto-detect it).
 3. **Configure Environment Variables**:
    Add the following variables in your Vercel Project Settings:
+   - `DEPLOYMENT_MODE`: Set to `vercel` (Enables lightweight cloud adapter mode).
    - `LLM_PROVIDER`: Set to `openai` (Ollama cannot run serverless).
    - `OPENAI_API_KEY`: Your OpenAI API key.
    - `OPENAI_MODEL`: `gpt-4o-mini` (or preferred model).
+   - `SUSTALLY_BACKEND_URL`: (Optional) Connects to a hosted backend server running the full RAG pipeline.
 4. **Deploy**: Click **Deploy**.
 5. **Verify Endpoints**:
    - Root URL `/` loads the Next.js search dashboard interface.
@@ -182,7 +183,8 @@ Sustally is fully configured for serverless deployment on **Vercel** with a **Ne
    - `/api/ask` serves the multi-agent question answering capabilities.
 
 > [!NOTE]
-> The local Streamlit dashboard remains fully available via `python -m streamlit run app/streamlit_app.py`. For production-grade Vercel RAG capabilities, configure a hosted cloud database and cloud storage as explained in [Deployment.md](docs/Deployment.md) (local file writes are ignored on Vercel's read-only serverless containers).
+> The local Streamlit dashboard remains fully available via `pip install -r requirements-local.txt` and `python -m streamlit run app/streamlit_app.py`. For production-grade Vercel RAG capabilities, configure a hosted cloud database or remote backend endpoint (`SUSTALLY_BACKEND_URL`) as explained in [Deployment.md](docs/Deployment.md) (local database and vector files are automatically excluded in `vercel.json` to keep the bundle under 500 MB).
+
 
 ---
 

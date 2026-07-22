@@ -4,5 +4,10 @@
       "source": "/api/:path*",
       "destination": "/api/index.py"
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.py": {
+      "excludeFiles": "{.venv/**,venv/**,env/**,tests/**,scripts/**,docs/**,data/**,reports/**,uploads/**,vector_db/**,chroma_db/**,db/**,generated_reports/**,models/**,.cache/**,**/__pycache__/**,**/*.pdf,**/*.xml,**/*.csv,**/*.log}"
+    }
+  }
 }

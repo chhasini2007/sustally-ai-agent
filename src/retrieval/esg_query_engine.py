@@ -124,6 +124,30 @@ class ESGQueryEngine:
         # Step 5: Citation & Fact Validator
         validation_data = self.validator.validate_and_score(plan, retrieved_data, reasoning_data, ranking_data)
 
+        # Detailed Debug Log Output
+        structured_metrics = retrieved_data.get("structured_metrics", [])
+        narrative_chunks = retrieved_data.get("narrative_chunks", [])
+        
+        doc_names = set()
+        page_nums = set()
+        for m in structured_metrics:
+            doc_names.add(m.get("source_file", "Unknown"))
+            page_nums.add(str(m.get("page", "N/A")))
+        for c in narrative_chunks:
+            meta = c.get("metadata", {})
+            doc_names.add(meta.get("source_file", meta.get("source", "Unknown")))
+            page_nums.add(str(meta.get("page", "N/A")))
+
+        logger.info("=== Multi-Agent ESG Query Pipeline Diagnostic ===")
+        logger.info(f"- Resolved Company: {plan.companies}")
+        logger.info(f"- Resolved Year: {plan.years}")
+        logger.info(f"- Resolved Metric: {plan.metric_keys}")
+        logger.info(f"- SQL Rows Found: {len(structured_metrics)}")
+        logger.info(f"- Vector Chunks Retrieved: {len(narrative_chunks)}")
+        logger.info(f"- Retrieved Documents: {list(doc_names)}")
+        logger.info(f"- Retrieved Page/Sections: {list(page_nums)}")
+        logger.info(f"- Final Confidence Score: {validation_data.get('confidence_score', 0.0)}")
+
         # Step 6: Report Generator
         report_text = self.report_gen.generate_report(plan, retrieved_data, reasoning_data, validation_data, ranking_data)
 

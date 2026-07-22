@@ -121,8 +121,12 @@ class PlannerAgent:
                 metric_keys.append("scope3_emissions")
             elif "renewable" in query_lower or "green energy" in query_lower:
                 metric_keys.append("renewable_energy_pct")
-            elif "female" in query_lower or "women" in query_lower or "gender" in query_lower:
-                metric_keys.append("female_employee_headcount_share_pct")
+            elif "total employees" in query_lower or "total employee" in query_lower:
+                metric_keys.append("total_employee_count")
+            elif "female" in query_lower or "women" in query_lower or "gender" in query_lower or "male vs female" in query_lower or "diversity" in query_lower:
+                metric_keys.extend(["female_employee_headcount_share_pct", "total_employee_count"])
+            elif "workforce" in query_lower or "employees" in query_lower or "employee" in query_lower:
+                metric_keys.append("total_employee_count")
             elif "waste" in query_lower:
                 metric_keys.append("waste_generation_tonnes")
 

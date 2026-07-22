@@ -44,7 +44,14 @@ class ReasoningAgent:
         if plan.intent == "calculation" or plan.target_unit:
             calculation_results = self._compute_unit_conversions(plan, structured_metrics)
 
-        analytical_summary = self._generate_analytical_summary(plan, structured_metrics, yoy_analysis, ranking_data, calculation_results)
+        analytical_summary = self._generate_analytical_summary(
+            plan, 
+            structured_metrics, 
+            yoy_analysis, 
+            ranking_data, 
+            calculation_results,
+            retrieved_data=retrieved_data
+        )
 
         return {
             "yoy_analysis": yoy_analysis,
@@ -158,7 +165,8 @@ class ReasoningAgent:
         metrics: List[Dict[str, Any]],
         yoy: List[Dict[str, Any]],
         ranking: Optional[Dict[str, Any]],
-        calc: List[Dict[str, Any]]
+        calc: List[Dict[str, Any]],
+        retrieved_data: Optional[Dict[str, Any]] = None
     ) -> str:
         if calc:
             lines = []
@@ -170,7 +178,40 @@ class ReasoningAgent:
             return " ".join(lines)
 
         if not metrics and not ranking:
-            return "No verified structured metrics were found in the database for the specified company, year, or topic filters."
+            narrative_chunks = retrieved_data.get("narrative_chunks", []) if retrieved_data else []
+            if narrative_chunks:
+                try:
+                    from src.llm.llm_router import LLMRouter
+                    llm_router = LLMRouter()
+
+                    context_parts = []
+                    for idx, chunk in enumerate(narrative_chunks):
+                        meta = chunk.get("metadata", {})
+                        src_file = meta.get("source_file", meta.get("source", "Unknown"))
+                        page = meta.get("page", "N/A")
+                        context_parts.append(
+                            f"[Excerpt #{idx+1} - File: {src_file}, Page: {page}]\n{chunk.get('content', '')}"
+                        )
+                    context_text = "\n\n".join(context_parts)
+
+                    prompt = (
+                        f"You are Sustally, a professional AI sustainability analyst dashboard. "
+                        f"Answer the user's ESG question using ONLY the retrieved report excerpts provided below. "
+                        f"If the context does not contain enough information, explain that clearly instead of guessing.\n\n"
+                        f"Retrieved Report Context:\n{context_text}\n\n"
+                        f"User Question: {plan.query}\n\n"
+                        f"Answer (be structured, detailed, and cite [File: filename, Page: page_no] where applicable):"
+                    )
+
+                    messages = [{"role": "user", "content": prompt}]
+                    generator, provider = llm_router.generate(messages, stream=False)
+                    full_answer = "".join(generator).strip()
+                    if full_answer:
+                        return full_answer
+                except Exception as e:
+                    logger.warning(f"Failed to run LLM reasoning synthesis: {e}")
+
+            return "No verified structured metrics or narrative disclosures were found in the database for the specified company, year, or topic filters."
 
         summary_parts = []
         if ranking and ranking.get("ranked_table"):

@@ -1,0 +1,15 @@
+streamlit
+pandas
+plotly
+pypdf
+pdfplumber
+python-dotenv
+sentence-transformers
+chromadb
+numpy
+tqdm
+requests
+pymupdf
+urllib3
+fastapi
+pydantic

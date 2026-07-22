@@ -270,12 +270,11 @@ class DocumentManager:
                 continue
             
             # Clear old records to avoid duplication if file changed
-            if file_type != "xml":
-                chroma_store.delete_company_year(company, year)
-                query_cache.clear_cache(company, year)
+            chroma_store.delete_company_year(company, year)
+            query_cache.clear_cache(company, year)
             metrics_store.clear_company_metrics(company, year, source_file=file_name)
             
-            # Generate Chunks (only for PDFs or non-XMLs)
+            # Generate Chunks
             all_chunks = []
             if file_type != "xml":
                 for page in res["pages"]:
@@ -287,6 +286,17 @@ class DocumentManager:
                         source_file=file_name
                     )
                     all_chunks.extend(page_chunks)
+            else:
+                # Direct mapping for XML parsed pages into chunk objects
+                for page in res["pages"]:
+                    all_chunks.append({
+                        "company": company,
+                        "year": year,
+                        "section_type": "XML Content",
+                        "source_file": file_name,
+                        "page": str(page["page_num"]),
+                        "content": page["text"]
+                    })
                 
             # Extract Metrics from text paragraphs (only for PDFs or non-XMLs)
             metrics_to_save = []

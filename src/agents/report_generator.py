@@ -35,11 +35,11 @@ class ReportGenerator:
         sections = []
 
         # Section 1: Executive Summary
-        exec_summary = self._build_executive_summary(plan, structured_metrics, ranking_data, reasoning_data)
+        exec_summary = self._build_executive_summary(plan, structured_metrics, ranking_data, reasoning_data, retrieved_data=retrieved_data)
         sections.append(f"### Executive Summary\n{exec_summary}")
 
         # Section 2: Evidence & Key Findings
-        evidence = self._build_evidence_findings(plan, structured_metrics, reasoning_data, ranking_data)
+        evidence = self._build_evidence_findings(plan, structured_metrics, reasoning_data, ranking_data, retrieved_data=retrieved_data)
         sections.append(f"### Evidence & Key Findings\n{evidence}")
 
         # Section 3: Metrics Table
@@ -72,6 +72,20 @@ class ReportGenerator:
         # Section 8: Query Execution Log & Diagnostics (Requirement 11)
         exec_path_str = " -> ".join(plan.execution_path) if plan.execution_path else "PlannerAgent -> RetrievalAgent -> ReasoningAgent -> CitationValidator"
         reasoning_sources_str = ", ".join(sources) if sources else "None"
+        
+        doc_names = []
+        page_nums = []
+        for m in structured_metrics:
+            doc_names.append(m.get("source_file", "Unknown"))
+            page_nums.append(str(m.get("page", "N/A")))
+        for c in narrative_chunks:
+            meta = c.get("metadata", {})
+            doc_names.append(meta.get("source_file", meta.get("source", "Unknown")))
+            page_nums.append(str(meta.get("page", "N/A")))
+            
+        doc_names_str = ", ".join(sorted(list(set(doc_names)))) if doc_names else "None"
+        page_nums_str = ", ".join(sorted(list(set(page_nums)))) if page_nums else "None"
+
         diagnostics = (
             f"---\n### Query Execution Log & Diagnostics\n"
             f"- **Intent**: `{plan.intent}`\n"
@@ -79,6 +93,8 @@ class ReportGenerator:
             f"- **Structured Metrics Found**: {len(structured_metrics)}\n"
             f"- **Vector Chunks Retrieved**: {len(narrative_chunks)}\n"
             f"- **Reasoning Sources**: {reasoning_sources_str}\n"
+            f"- **Retrieved Documents**: `{doc_names_str}`\n"
+            f"- **Retrieved Pages/Sections**: `{page_nums_str}`\n"
             f"- **Final Confidence**: {conf_score} ({conf_label})\n"
             f"- **Target Entities**: {', '.join(plan.companies) if plan.companies else 'All Indexed Entities'}\n"
             f"- **Target Metrics**: {', '.join(plan.metric_keys) if plan.metric_keys else 'N/A'}"
@@ -92,7 +108,8 @@ class ReportGenerator:
         plan: QueryPlan,
         metrics: List[Dict[str, Any]],
         ranking_data: Optional[Dict[str, Any]],
-        reasoning_data: Dict[str, Any]
+        reasoning_data: Dict[str, Any],
+        retrieved_data: Optional[Dict[str, Any]] = None
     ) -> str:
         comps_str = ", ".join(plan.companies) if plan.companies else "indexed entities"
         years_str = ", ".join(plan.years) if plan.years else "all available reporting years"
@@ -118,6 +135,13 @@ class ReportGenerator:
                 f"All metrics are extracted strictly from corporate BRSR and sustainability disclosures."
             )
 
+        narrative_chunks = retrieved_data.get("narrative_chunks", []) if retrieved_data else []
+        if not metrics and narrative_chunks:
+            return (
+                f"This report presents narrative ESG intelligence for **{comps_str}** across **{years_str}** "
+                f"compiled from retrieved report disclosures."
+            )
+
         return (
             f"An ESG intelligence audit was performed for **{comps_str}** across **{years_str}**. "
             f"No direct numerical metric entries were matched for the requested filter criteria."
@@ -128,7 +152,8 @@ class ReportGenerator:
         plan: QueryPlan,
         metrics: List[Dict[str, Any]],
         reasoning_data: Dict[str, Any],
-        ranking_data: Optional[Dict[str, Any]]
+        ranking_data: Optional[Dict[str, Any]],
+        retrieved_data: Optional[Dict[str, Any]] = None
     ) -> str:
         if reasoning_data.get("calculation_results"):
             lines = []
@@ -152,6 +177,22 @@ class ReportGenerator:
             for m in metrics[:10]:
                 lines.append(
                     f"- **{m.get('company')}** reported **{m.get('metric_label', m.get('metric_key'))}** of **{m.get('value')} {m.get('unit')}** in **{m.get('year')}**."
+                )
+            return "\n".join(lines)
+
+        narrative_chunks = retrieved_data.get("narrative_chunks", []) if retrieved_data else []
+        if not metrics and narrative_chunks:
+            lines = []
+            for c in narrative_chunks:
+                meta = c.get("metadata", {})
+                comp = meta.get("company", "Unknown")
+                src_file = meta.get("source_file", meta.get("source", "Unknown"))
+                page = meta.get("page", "N/A")
+                content_preview = c.get("content", "").strip()
+                if len(content_preview) > 180:
+                    content_preview = content_preview[:177] + "..."
+                lines.append(
+                    f"- **{comp}** (File: {src_file}, Page {page}): \"{content_preview}\""
                 )
             return "\n".join(lines)
 

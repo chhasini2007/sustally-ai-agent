@@ -4,7 +4,7 @@ import sys
 # Add project root to Python search path so we can resolve src/ imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -24,20 +24,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global engine container for lazy instantiation
-_engine = None
+# Global instances for lazy instantiation
+_vercel_agent = None
+_local_engine = None
 
-def get_engine():
+def get_agent():
     """
-    Lazy initializer for the ESG query engine.
-    Ensures expensive modules and classes are loaded only when the first query arrives,
-    rather than during server initialization (which speeds up serverless warm starts).
+    Returns the appropriate agent backend based on the DEPLOYMENT_MODE env variable.
+    Ensures that when running on Vercel, heavy ML modules are never imported or loaded.
     """
-    global _engine
-    if _engine is None:
-        from src.retrieval.esg_query_engine import ESGQueryEngine
-        _engine = ESGQueryEngine()
-    return _engine
+    global _vercel_agent, _local_engine
+    mode = os.getenv("DEPLOYMENT_MODE", "local").strip().lower()
+
+    if mode == "vercel":
+        if _vercel_agent is None:
+            # Import vercel agent lazily to prevent loading local RAG libraries on Vercel
+            from src.deployment.vercel_agent import VercelAgent
+            _vercel_agent = VercelAgent()
+        return _vercel_agent, True
+    else:
+        if _local_engine is None:
+            # Import full RAG engine for local use
+            from src.retrieval.esg_query_engine import ESGQueryEngine
+            _local_engine = ESGQueryEngine()
+        return _local_engine, False
 
 
 # Pydantic Schemas for validation
@@ -77,48 +87,53 @@ def health_check():
 def ask_question(request: AskRequest):
     """
     Core RAG question-answering route.
-    Delegates parsing, planning, routing, delta reasoning, and report generation
-    to the active ESGQueryEngine agent pipeline.
+    Delegates to the lightweight vercel adapter or full local agent based on deployment mode.
     """
     question = request.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     try:
-        engine = get_engine()
-        result = engine.process_query(question)
+        agent, is_vercel_mode = get_agent()
 
-        # Extract answer and metadata citations
-        answer = result.get("response_text", "") or result.get("answer", "")
-        citations = result.get("sources", [])
+        if is_vercel_mode:
+            # Call Vercel Agent (uses cloud services/hosted backend)
+            result = agent.ask(question)
+            
+            # If no provider is configured, return HTTP 503 Service Unavailable
+            if not result.get("success") and "ConfigurationError" in str(result.get("error", "")):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=result.get("answer")
+                )
 
-        return AskResponse(
-            success=True,
-            question=question,
-            answer=answer,
-            citations=citations,
-            error=None
-        )
+            return AskResponse(
+                success=result.get("success", False),
+                question=question,
+                answer=result.get("answer", ""),
+                citations=result.get("citations", []),
+                error=result.get("error")
+            )
+        else:
+            # Call local full ESGQueryEngine agent
+            result = agent.process_query(question)
+            return AskResponse(
+                success=True,
+                question=question,
+                answer=result.get("response_text", "") or result.get("answer", ""),
+                citations=result.get("sources", []),
+                error=None
+            )
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        # Log error locally and return gracefully to avoid API crashes
+        # Log error locally and return gracefully
         import logging
         logging.getLogger(__name__).exception(f"Error handling query '/api/ask': {e}")
-        
-        # If the local database is missing (untracked on GitHub), fall back to explanation
-        error_msg = str(e)
-        user_friendly_answer = (
-            "⚠️ The ESG Intelligence Platform encountered a deployment limitations error.\n\n"
-            f"**Error Details:** `{error_msg}`\n\n"
-            "**Possible Cause:** The local SQLite database (`metrics.db`) or Chroma vector database is "
-            "not present in the cloud bundle (they are excluded from GitHub for repo hygiene).\n\n"
-            "**Action Required:** Connect the platform to a hosted cloud database or object store for serverless "
-            "deployments as detailed in `docs/Deployment.md`."
-        )
-        
         return AskResponse(
             success=False,
             question=question,
-            answer=user_friendly_answer,
+            answer=f"⚠️ Pipeline execution failure: {str(e)}",
             citations=[],
-            error=error_msg
+            error=str(e)
         )
