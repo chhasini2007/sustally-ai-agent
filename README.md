@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Sustally ESG Intelligence Platform 
 
 **Sustally** is an enterprise-grade, AI-powered ESG (Environmental, Social, and Governance) intelligence dashboard designed to ingest, process, and analyze Business Responsibility and Sustainability Reports (BRSR) of public and private companies.
@@ -165,3 +166,6 @@ Try the following questions in the dashboard query box:
 ## 📄 License
 
 Distributed under the MIT License. See [LICENSE](LICENSE) for details.
+=======
+# sustally-ai-agent
+>>>>>>> 6186c933e99214ceb1e918c38afc03ae875ef878
