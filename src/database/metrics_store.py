@@ -1,7 +1,102 @@
 import sqlite3
 import os
 from typing import List, Dict, Any, Optional
+import logging
 from config import settings
+
+logger = logging.getLogger(__name__)
+
+METRIC_ALIASES = {
+    "scope1_emissions": [
+        "TotalScope1Emissions",
+        "Scope1Emissions",
+        "Scope 1 Emissions",
+        "scope1_emissions_tco2e",
+        "scope1_emissions"
+    ],
+    "scope2_emissions": [
+        "TotalScope2Emissions",
+        "Scope2Emissions",
+        "Scope 2 Emissions",
+        "scope2_emissions_tco2e",
+        "scope2_emissions"
+    ],
+    "scope3_emissions": [
+        "TotalScope3Emissions",
+        "Scope3Emissions",
+        "Scope 3 Emissions",
+        "scope3_emissions_tco2e",
+        "scope3_emissions"
+    ],
+    "water_consumption": [
+        "TotalVolumeOfWaterConsumption",
+        "Water Consumption",
+        "water_consumption_kl",
+        "water_consumption"
+    ],
+    "water_consumption_kl": [
+        "TotalVolumeOfWaterConsumption",
+        "Water Consumption",
+        "water_consumption_kl",
+        "water_consumption"
+    ],
+    "waste_generated": [
+        "TotalWasteGenerated",
+        "waste_generation_tonnes",
+        "waste_generated"
+    ],
+    "waste_generation_tonnes": [
+        "TotalWasteGenerated",
+        "waste_generation_tonnes",
+        "waste_generated"
+    ],
+    "female_percentage": [
+        "PercentageOfGrossWagesPaidToFemaleToTotalWagesPaid",
+        "PercentageOfEmployeesOrWorkersIncludingDifferentlyAbled",
+        "Female Workforce %",
+        "Women Employees %",
+        "female_employee_headcount_share_pct",
+        "female_percentage"
+    ],
+    "female_employee_headcount_share_pct": [
+        "PercentageOfGrossWagesPaidToFemaleToTotalWagesPaid",
+        "PercentageOfEmployeesOrWorkersIncludingDifferentlyAbled",
+        "Female Workforce %",
+        "Women Employees %",
+        "female_employee_headcount_share_pct",
+        "female_percentage"
+    ],
+    "female_employee_count": [
+        "AverageNumberOfFemaleEmployeesOrWorkersAtTheBeginningOfTheYearAndAsAtEndOfTheYear",
+        "female_employee_count"
+    ],
+    "total_employee_count": [
+        "AverageNumberOfEmployeesOrWorkersAtTheBeginningOfTheYearAndAsAtEndOfTheYear",
+        "NumberOfEmployeesCoveredAsPercentageOfTotalEmployees",
+        "total_employee_count",
+        "total employees",
+        "employees"
+    ],
+    "renewable_energy_pct": [
+        "TotalEnergyConsumedFromRenewableAndNonRenewableSources",
+        "TotalEnergyConsumedFromRenewableSources",
+        "Renewable Energy %",
+        "renewable_energy_pct",
+        "Calculated from: TotalEnergyConsumedFromRenewableAndNonRenewableSources",
+        "Calculated from: TotalEnergyConsumedFromRenewableSources"
+    ]
+}
+
+def get_all_aliases(metric_key: str) -> List[str]:
+    base_key = metric_key.lower().replace("_tco2e", "").replace("_kl", "").replace("_tonnes", "")
+    aliases = set()
+    for key, val in METRIC_ALIASES.items():
+        key_clean = key.lower().replace("_tco2e", "").replace("_kl", "").replace("_tonnes", "")
+        if key_clean == base_key:
+            aliases.update(val)
+    if not aliases:
+        aliases.add(metric_key)
+    return list(aliases)
 
 class MetricsStore:
     def __init__(self, db_path: Optional[str] = None):
@@ -182,33 +277,88 @@ class MetricsStore:
         finally:
             conn.close()
 
-    def get_metric(self, company: str, year: str, metric_key: str) -> List[Dict[str, Any]]:
+    def get_metric_with_aliases(self, company: Optional[str], year: Optional[str], metric_key: str, companies: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        aliases = get_all_aliases(metric_key)
+        conditions = []
+        params = []
+        
+        if company:
+            conditions.append("LOWER(company) = LOWER(?)")
+            params.append(company)
+        elif companies:
+            placeholders = ",".join(["?"] * len(companies))
+            conditions.append(f"LOWER(company) IN ({placeholders})")
+            params.extend([c.lower() for c in companies])
+            
+        if year:
+            conditions.append("year = ?")
+            params.append(year)
+            
+        placeholders_aliases = ",".join(["?"] * len(aliases))
+        conditions.append(f"(metric_key IN ({placeholders_aliases}) OR metric_label IN ({placeholders_aliases}))")
+        params.extend(aliases + aliases)
+            
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        sql = f"""
+            SELECT company, year, metric_key AS metric, value, unit, source_file, page, metric_label, metric_key
+            FROM metrics
+            {where_clause}
+        """
+        
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT company, year, metric_key, metric_label, value, unit, source_file, page
-                FROM metrics
-                WHERE LOWER(company) = LOWER(?) AND year = ? AND metric_key = ?
-            """, (company, year, metric_key))
-            return [dict(row) for row in cursor.fetchall()]
+            cursor.execute(sql, params)
+            rows = [dict(row) for row in cursor.fetchall()]
+            
+            matched = []
+            for r in rows:
+                r["metric_key"] = r.get("metric_key") or r.get("metric")
+                matched.append(r)
+                
+            if not matched:
+                like_conditions = []
+                like_params = []
+                if company:
+                    like_conditions.append("LOWER(company) = LOWER(?)")
+                    like_params.append(company)
+                elif companies:
+                    placeholders = ",".join(["?"] * len(companies))
+                    like_conditions.append(f"LOWER(company) IN ({placeholders})")
+                    like_params.extend([c.lower() for c in companies])
+                if year:
+                    like_conditions.append("year = ?")
+                    like_params.append(year)
+                    
+                sub_clauses = []
+                for alias in aliases:
+                    clean = alias.split("}")[-1].replace("_", "").replace(" ", "").strip()
+                    if len(clean) > 3:
+                        sub_clauses.append("metric_key LIKE ? OR metric_label LIKE ?")
+                        like_params.extend([f"%{clean}%", f"%{clean}%"])
+                if sub_clauses:
+                    like_conditions.append(f"({' OR '.join(sub_clauses)})")
+                    where_clause = " WHERE " + " AND ".join(like_conditions) if like_conditions else ""
+                    sql = f"""
+                        SELECT company, year, metric_key AS metric, value, unit, source_file, page, metric_label, metric_key
+                        FROM metrics
+                        {where_clause}
+                    """
+                    cursor.execute(sql, like_params)
+                    for row in cursor.fetchall():
+                        r = dict(row)
+                        r["metric_key"] = r.get("metric_key") or r.get("metric")
+                        matched.append(r)
+            return matched
         finally:
             conn.close()
 
+    def get_metric(self, company: str, year: str, metric_key: str) -> List[Dict[str, Any]]:
+        return self.get_metric_with_aliases(company, year, metric_key)
+
     def get_metric_for_all_companies(self, year: str, metric_key: str) -> List[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
-        try:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT company, year, metric_key, metric_label, value, unit, source_file, page
-                FROM metrics
-                WHERE year = ? AND metric_key = ?
-            """, (year, metric_key))
-            return [dict(row) for row in cursor.fetchall()]
-        finally:
-            conn.close()
+        return self.get_metric_with_aliases(None, year, metric_key)
 
     def get_all_companies(self) -> List[str]:
         conn = sqlite3.connect(self.db_path)
@@ -229,14 +379,19 @@ class MetricsStore:
             conn.close()
 
     def get_most_recent_year_for_metric(self, company: str, metric_key: str) -> Optional[str]:
+        aliases = get_all_aliases(metric_key)
+        placeholders = ",".join(["?"] * len(aliases))
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT year FROM metrics 
-                WHERE LOWER(company) = LOWER(?) AND metric_key = ? 
+                WHERE LOWER(company) = LOWER(?) AND (
+                    metric_key IN ({placeholders}) OR
+                    metric_label IN ({placeholders})
+                ) 
                 ORDER BY year DESC LIMIT 1
-            """, (company, metric_key))
+            """, [company] + aliases + aliases)
             row = cursor.fetchone()
             return row[0] if row else None
         finally:
@@ -257,21 +412,82 @@ class MetricsStore:
             conn.close()
 
     def get_metrics_for_companies(self, companies: List[str], metric_keys: List[str]) -> List[Dict[str, Any]]:
-        if not companies or not metric_keys:
-            return []
-        placeholders_companies = ",".join(["?"] * len(companies))
-        placeholders_keys = ",".join(["?"] * len(metric_keys))
-        params = [c.lower() for c in companies] + metric_keys
+        results = []
+        for key in metric_keys:
+            rows = self.get_metric_with_aliases(None, None, key, companies=companies)
+            results.extend(rows)
+        return results
+
+    def get_filtered_ranking_metrics(
+        self,
+        metric_key: str,
+        companies: Optional[List[str]] = None,
+        year: Optional[str] = None,
+        threshold_filter: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        aliases = get_all_aliases(metric_key)
+        placeholders_aliases = ",".join(["?"] * len(aliases))
+        
+        conditions = [f"(metric_key IN ({placeholders_aliases}) OR metric_label IN ({placeholders_aliases}))"]
+        params = list(aliases) + list(aliases)
+        
+        if year:
+            conditions.append("year = ?")
+            params.append(year)
+            
+        if companies:
+            placeholders_companies = ",".join(["?"] * len(companies))
+            conditions.append(f"LOWER(company) IN ({placeholders_companies})")
+            params.extend([c.lower() for c in companies])
+            
+        if threshold_filter:
+            op = threshold_filter.get("operator")
+            val = threshold_filter.get("value")
+            if op in [">", "<", "=", ">=", "<="]:
+                conditions.append(f"value {op} ?")
+                params.append(val)
+                
+        where_clause = " WHERE " + " AND ".join(conditions)
+        sql = f"""
+            SELECT company,
+                   year,
+                   metric_key AS metric,
+                   value,
+                   unit,
+                   source_file,
+                   page,
+                   metric_label,
+                   metric_key
+            FROM metrics
+            {where_clause}
+            ORDER BY value DESC
+        """
+        
+        logger.info(f"Generated SQL for ranking/filtering: {sql.strip()} with params {params}")
+        
         conn = sqlite3.connect(self.db_path)
         try:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute(f"""
-                SELECT company, year, metric_key, metric_label, value, unit, source_file, page
-                FROM metrics
-                WHERE LOWER(company) IN ({placeholders_companies}) AND metric_key IN ({placeholders_keys})
-            """, params)
-            return [dict(row) for row in cursor.fetchall()]
+            cursor.execute(sql, params)
+            rows = [dict(row) for row in cursor.fetchall()]
+            
+            if not rows:
+                logger.info("Strict SQL IN returned 0 rows. Using fuzzy alias matching fallback.")
+                fuzzy_rows = self.get_metric_with_aliases(None, year, metric_key, companies=companies)
+                if threshold_filter:
+                    op = threshold_filter.get("operator")
+                    val = threshold_filter.get("value")
+                    if op == ">":
+                        fuzzy_rows = [r for r in fuzzy_rows if r.get("value", 0.0) > val]
+                    elif op == "<":
+                        fuzzy_rows = [r for r in fuzzy_rows if r.get("value", 0.0) < val]
+                    elif op == "=":
+                        fuzzy_rows = [r for r in fuzzy_rows if r.get("value", 0.0) == val]
+                fuzzy_rows = sorted(fuzzy_rows, key=lambda r: r.get("value", 0.0), reverse=True)
+                rows = fuzzy_rows
+                
+            return rows
         finally:
             conn.close()
 
