@@ -134,6 +134,22 @@ def check_conversational_intent(query: str) -> Optional[str]:
             
     return None
 
+def _is_list_companies_query(query_lower: str) -> bool:
+    query_clean = query_lower.strip("? .!")
+    if "list" in query_clean and "compan" in query_clean:
+        return True
+    if "compan" in query_clean:
+        indicators = ["how many", "which", "what", "show", "list", "view", "get", "number of", "identify"]
+        db_contexts = ["index", "register", "database", "load", "available", "system", "sustally", "track", "current"]
+        has_indicator = any(ind in query_clean for ind in indicators)
+        has_db_context = any(ctx in query_clean for ctx in db_contexts)
+        if has_indicator and has_db_context:
+            return True
+        # Match questions ending in "companies" like "how many companies?"
+        if query_clean.startswith("how many") and query_clean.endswith("companies"):
+            return True
+    return False
+
 def question_understanding(query: str, conversation_context: List[Dict[str, Any]] = None, active_company: str = None) -> Dict[str, Any]:
     """
     Analyzes the raw question and conversation context to return a structured understanding object.
@@ -348,15 +364,16 @@ def question_understanding(query: str, conversation_context: List[Dict[str, Any]
         "waste", "generated", "generation", "tonnes",
         "esg", "sustainability", "brsr"
     ]
-    has_compan = "compan" in query_lower
+    has_compan = bool(re.search(r"\bcompan", query_lower))
     has_ranking_keyword = any(k in query_lower for k in ranking_keywords) or bool(re.search(r"\btop\s*\d*", query_lower))
+    has_threshold = bool(re.search(r"(?:more than|greater than|less than|above|below|over|under|at least|at most|>|<)\s*\d+", query_lower))
     has_ranking_esg = any(re.search(rf"\b{re.escape(w)}\b", query_lower) for w in ranking_esg_keywords)
 
-    is_ranking = (has_ranking_keyword or has_compan) and has_ranking_esg
+    is_ranking = (has_ranking_keyword or has_compan or has_threshold) and has_ranking_esg
 
     # Dynamic fallback mapping for ranking/cross-company queries if no synonym matched
     if not matched_metric_keys and is_ranking:
-        if "female" in query_lower or "women" in query_lower or "gender" in query_lower:
+        if "female" in query_lower or "women" in query_lower or "gender" in query_lower or (("employee" in query_lower or "worker" in query_lower or "workforce" in query_lower) and any(w in query_lower for w in ["percentage", "percent", "%", "share", "diversity", "ratio", "proportion"])):
             if "wage" in query_lower or "pay" in query_lower or "remuneration" in query_lower:
                 matched_metric_keys = ["female_employee_wage_share_pct"]
             else:
@@ -408,7 +425,7 @@ def question_understanding(query: str, conversation_context: List[Dict[str, Any]
     has_system = (
         ("list" in query_lower and "xml" in query_lower and "report" in query_lower) or
         ("metric" in query_lower and "xml" in query_lower) or
-        ("list" in query_lower and "compan" in query_lower)
+        _is_list_companies_query(query_lower)
     )
     
     has_valid_lane = any(keyword in query_lower for keyword in [
@@ -450,6 +467,8 @@ def question_understanding(query: str, conversation_context: List[Dict[str, Any]
         intent = "general"
     elif is_yoy_query:
         intent = "trend"
+    elif is_ranking and len(resolved_companies) < 2:
+        intent = "ranking"
     elif is_comparison:
         intent = "comparison"
     elif is_ranking:
@@ -466,12 +485,20 @@ def question_understanding(query: str, conversation_context: List[Dict[str, Any]
     elif "metric" in query_lower and "xml" in query_lower:
         matched_metric_keys = ["list_xml_metrics"]
         intent = "lookup"
-    elif "list" in query_lower and "compan" in query_lower:
+    elif _is_list_companies_query(query_lower):
         matched_metric_keys = ["list_companies"]
         intent = "lookup"
 
     # Overrides for status and matching based on determined intent/phrases
     if intent == "general":
+        status = "ok"
+        matched_term = None
+        matches = []
+    elif any(k in matched_metric_keys for k in ["list_companies", "list_xml_reports", "list_xml_metrics"]):
+        status = "ok"
+        matched_term = None
+        matches = []
+    elif intent == "ranking" and len(resolved_companies) == 0:
         status = "ok"
         matched_term = None
         matches = []

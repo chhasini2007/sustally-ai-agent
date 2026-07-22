@@ -108,7 +108,7 @@ class XMLLoader:
                             match_found = False
                             for syn in info["synonyms"]:
                                 syn_clean = syn.replace("_", "").replace("-", "").replace(" ", "").lower()
-                                if tag_name_clean == syn_clean or syn_clean in tag_name_clean:
+                                if tag_name_clean == syn_clean:
                                     matched_key = key
                                     match_found = True
                                     break
@@ -153,6 +153,37 @@ class XMLLoader:
                     recurse(child, current_path)
                     
             recurse(root)
+            
+            # Group metrics by (metric_key, year) to resolve duplicates and choose the best representation
+            best_metrics = {}
+            for m in metrics:
+                key = (m["metric_key"], m["year"])
+                val = m["value"]
+                
+                if key not in best_metrics:
+                    best_metrics[key] = m
+                else:
+                    existing_m = best_metrics[key]
+                    existing_val = existing_m["value"]
+                    existing_tag = existing_m["metric_label"].lower()
+                    new_tag = m["metric_label"].lower()
+                    
+                    # Heuristics:
+                    # 1. Prefer non-zero values over zero values
+                    if existing_val == 0.0 and val != 0.0:
+                        best_metrics[key] = m
+                    elif val == 0.0 and existing_val != 0.0:
+                        # Keep the non-zero one
+                        pass
+                    else:
+                        # Both are non-zero or both are zero
+                        # Prefer "numberofemployeesorworkersincludingdifferentlyabled" over "averagenumberof..." or "numberofemployeesorworkers"
+                        if "numberofemployeesorworkersincludingdifferentlyabled" in new_tag and "numberofemployeesorworkersincludingdifferentlyabled" not in existing_tag:
+                            best_metrics[key] = m
+                        elif "totalvolumeofwaterconsumption" in new_tag and "totalvolumeofwaterconsumption" not in existing_tag:
+                            best_metrics[key] = m
+            
+            metrics = list(best_metrics.values())
             
             # Group all XML text into a single cohesive narrative chunk (truncated to fit model token limits)
             full_text = "\n".join(all_text_elements[:100])

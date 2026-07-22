@@ -200,6 +200,11 @@ def get_query_cache():
 def get_history_store():
     return HistoryStore()
 
+@st.cache_resource
+def get_esg_query_engine():
+    from src.retrieval.esg_query_engine import ESGQueryEngine
+    return ESGQueryEngine()
+
 # Initialize resources
 classifier = get_query_classifier()
 router = get_company_router()
@@ -784,299 +789,32 @@ with main_col:
         st.session_state["messages"].append({"role": "user", "content": query})
         save_message_async(conv_id, "user", query)
         
-        # Query Classification & Routing
-        classification = classifier.classify(
-            query, 
-            conversation_context=st.session_state.get("messages", []),
-            active_company=st.session_state.get("active_company")
-        )
+        # Multi-Agent Pipeline Execution
+        esg_engine = get_esg_query_engine()
         
-        if classification["status"] == "conversational":
-            qu = classification.get("question_understanding", {})
-            cat = qu.get("conversational_category", "greeting")
-            if cat == "greeting":
-                response = "Hi! Ask me anything about the sustainability reports in the database — company metrics, comparisons, trends, or summaries."
-            elif cat == "thanks":
-                response = "You're welcome! Let me know if you have any other questions about the sustainability reports."
-            else: # meta
-                response = (
-                    "I am Sustally, an AI assistant for corporate sustainability (ESG) report analysis. "
-                    "You can ask me questions about the sustainability reports in the database, including company metrics, comparisons, trends, or summaries."
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            chart_placeholder = st.empty()
+            
+            with st.spinner("Analyzing disclosures across Multi-Agent ESG Pipeline..."):
+                result = esg_engine.process_query(
+                    query=query,
+                    conversation_context=st.session_state.get("messages", []),
+                    active_company=st.session_state.get("active_company")
                 )
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            st.session_state["messages"].append({"role": "assistant", "content": response})
-            save_message_async(conv_id, "assistant", response, lane="CONVERSATIONAL")
-            st.rerun()
+                
+            full_response = result["response_text"]
+            fig = result.get("chart")
+            
+            message_placeholder.markdown(full_response)
+            if fig is not None:
+                chart_placeholder.plotly_chart(fig, use_container_width=True)
+                
+        st.session_state["messages"].append({
+            "role": "assistant",
+            "content": full_response,
+            "chart": fig
+        })
+        save_message_async(conv_id, "assistant", full_response, lane="ESG_AGENT")
+        st.rerun()
 
-        if classification["status"] == "out_of_scope":
-            response = "I can only answer questions based on the uploaded sustainability reports. Could you rephrase your question to relate to a specific company or report?"
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            st.session_state["messages"].append({"role": "assistant", "content": response})
-            save_message_async(conv_id, "assistant", response, lane="OUT_OF_SCOPE")
-            st.rerun()
-            
-        if classification["status"] == "system_help":
-            response = (
-                "### About Sustally\n\n"
-                "Sustally is an AI-powered Sustainability Report Analysis Agent designed to analyze corporate sustainability (ESG) reports for Indian companies. "
-                "All answers are strictly grounded in the uploaded sustainability reports.\n\n"
-                "**Key Capabilities:**\n"
-                "1. **Structured ESG Metric Lookup (Lane A)**: Retrieve precise numeric data (such as emissions, energy/water usage) directly from indexed reports.\n"
-                "2. **Narrative Q&A (Lane B)**: Ask details about strategy, policies, and targets which are answered using retrieval-augmented generation (RAG).\n"
-                "3. **Company Comparison (Lane C)**: Compare ESG metrics across multiple companies with dynamically generated charts.\n"
-                "4. **Trend Analysis (Lane D)**: Visualize year-over-year sustainability trends for a company.\n\n"
-                "Please query me about a specific company or report (e.g., 'Summarize Infosys water strategy' or 'Compare Scope 1 emissions of TCS and Infosys')."
-            )
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            st.session_state["messages"].append({"role": "assistant", "content": response})
-            save_message_async(conv_id, "assistant", response, lane="SYSTEM_HELP")
-            st.rerun()
-            
-        if classification["status"] == "missing_company" and st.session_state.get("active_company"):
-            classification["status"] = "ok"
-            classification["companies"] = [st.session_state["active_company"]]
-            if st.session_state.get("active_year"):
-                classification["years"] = [st.session_state["active_year"]]
-            
-            # Reclassify lane mapping based on the resolved company
-            qu_intent = classification.get("question_understanding", {}).get("intent", "narrative")
-            intent_map = {
-                "lookup": "A",
-                "narrative": "B",
-                "comparison": "C",
-                "trend": "D",
-                "ranking": "E",
-                "general": "G"
-            }
-            if len(classification["companies"]) >= 2:
-                classification["lane"] = "C"
-            else:
-                classification["lane"] = intent_map.get(qu_intent, "B")
-                
-        lane = classification["lane"]
-        comps = classification["companies"]
-        years = classification["years"]
-        metric_key = classification["metric_key"]
-        
-        # Handle missing/ambiguous/unresolved company warning
-        if classification["status"] in ("missing_company", "ambiguous", "unresolved"):
-            status = classification["status"]
-            matched_term = classification["matched_term"]
-            
-            if status == "ambiguous":
-                matches_list = ", ".join(classification["matches"])
-                response = (
-                    f"I found multiple companies matching '{matched_term}' in the database: {matches_list}. "
-                    f"Did you mean one of these, or a different {matched_term} company not yet in the database?"
-                )
-            elif status == "unresolved":
-                response = (
-                    f"I couldn't match '{matched_term}' to a specific company in the database. "
-                    f"Did you mean Tata Consultancy Services Limited (TCS)? Please specify the exact company name."
-                )
-            else:
-                response = "Please select a company/report first."
-                
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            st.session_state["messages"].append({"role": "assistant", "content": response})
-            save_message_async(conv_id, "assistant", response, lane=None)
-            st.rerun()
-        else:
-            # Check cache
-            cache_comp = comps[0] if comps else "all"
-            cache_yr = years[0] if years else "latest"
-            cached_val = query_cache.get_cached_answer(cache_comp, cache_yr, query)
-            
-            if cached_val:
-                with st.chat_message("assistant"):
-                    st.caption("⚡ Response served from Cache (0ms)")
-                    st.markdown(cached_val)
-                st.session_state["messages"].append({"role": "assistant", "content": cached_val})
-                save_message_async(conv_id, "assistant", cached_val, lane=lane)
-            else:
-                with st.chat_message("assistant"):
-                    message_placeholder = st.empty()
-                    chart_placeholder = st.empty()
-                    
-                    full_response = ""
-                    fig = None
-                    is_reused = False
-                    refreshed_time = None
-                    chart_id = None
-                    
-                    # Execute Lane
-                    if lane == "A":
-                        if metric_key == "list_companies":
-                            companies_list = router.get_known_companies()
-                            if companies_list:
-                                full_response = "Here are the registered companies in Sustally database:\n" + "\n".join([f"- {c}" for c in companies_list])
-                            else:
-                                full_response = "No companies registered in the database yet. Please upload reports via the sidebar."
-                            message_placeholder.markdown(full_response)
-                            provider_name = "direct_lookup"
-                        elif metric_key == "list_xml_reports":
-                            manager = DocumentManager()
-                            manager.load_index()
-                            xml_files = [val for val in manager.index.values() if val.get("file_type") == "xml"]
-                            if xml_files:
-                                full_response = "Here are the indexed XML reports in Sustally:\n" + "\n".join([f"- {x['company']} ({x['year']}): {x['file_name']}" for x in xml_files])
-                            else:
-                                full_response = "No XML reports registered in the database yet."
-                            message_placeholder.markdown(full_response)
-                            provider_name = "direct_lookup"
-                        elif metric_key == "list_xml_metrics":
-                            db_metrics = metrics_store.get_xml_metrics()
-                            if db_metrics:
-                                full_response = "The following ESG metrics are available from XML reports:\n"
-                                for m in db_metrics:
-                                    full_response += f"- **{m['company']} ({m['year']})**: {m['metric_key']} ({m['metric_label']}) = {m['value']} {m['unit']}\n"
-                            else:
-                                full_response = "No ESG metrics available from XML reports."
-                            message_placeholder.markdown(full_response)
-                            provider_name = "direct_lookup"
-                        else:
-                            st.caption("Lane A: Structured Lookup (DB)")
-                            t_start = time.time()
-                            target_comp = comps[0]
-                            target_year = years[0] if years else None
-                            
-                            import requests
-                            try:
-                                gen, provider_name, _ = qa_agent.run_lane_a(target_comp, target_year, metric_key, query, stream=True)
-                                for token in gen:
-                                    full_response += token
-                                    message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
-                            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                                full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
-                                provider_name = "unavailable"
-                                
-                            t_end = time.time()
-                            full_response += f"\n\n*(Query completed in {t_end - t_start:.2f}s using {provider_name})*"
-                            message_placeholder.markdown(full_response)
-                            st.session_state["last_provider"] = provider_name
-                            
-                    elif lane == "C" or lane == "E":
-                        if lane == "E":
-                            st.caption("Lane E: Ranking Engine")
-                        else:
-                            st.caption("Lane C: Comparison Engine (Structured + Visual)")
-                        t_start = time.time()
-                        
-                        chart_metric = metric_key if metric_key else "scope1_emissions_tco2e"
-                        
-                        # Pull comparison structured data and Plotly chart from ComparisonAgent
-                        structured_data, gen, provider_name, fig, is_reused, refreshed_time, chart_id = comp_agent.compare_companies(
-                            companies=comps,
-                            years=years,
-                            metric_keys=None,
-                            stream=True,
-                            chart_metric=chart_metric
-                        )
-                        
-                        if fig:
-                            chart_placeholder.plotly_chart(fig, use_container_width=True)
-                            if is_reused:
-                                st.caption(f"ℹ️ Showing previously generated chart — refreshed {refreshed_time}")
-                            
-                        import requests
-                        try:
-                            for token in gen:
-                                full_response += token
-                                message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
-                        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                            full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
-                            provider_name = "unavailable"
-                            
-                        t_end = time.time()
-                        full_response += f"\n\n*(Query completed in {t_end - t_start:.2f}s using {provider_name})*"
-                        message_placeholder.markdown(full_response)
-                        st.session_state["last_provider"] = provider_name
-                        
-                    elif lane == "D":
-                        st.caption("Lane D: Year-over-Year Trend Analysis")
-                        t_start = time.time()
-                        target_comp = comps[0]
-                        
-                        full_response, fig, is_reused, refreshed_time, chart_id = yoy_agent.compare_years(
-                            company=target_comp,
-                            metric_key=metric_key,
-                            years=years
-                        )
-                        
-                        if fig:
-                            chart_placeholder.plotly_chart(fig, use_container_width=True)
-                            if is_reused:
-                                st.caption(f"ℹ️ Showing previously generated chart — refreshed {refreshed_time}")
-                                
-                        t_end = time.time()
-                        full_response += f"\n\n*(Query completed in {t_end - t_start:.2f}s using Python calculated engine)*"
-                        message_placeholder.markdown(full_response)
-                        st.session_state["last_provider"] = "python_calc"
-                        
-                    elif lane == "G":
-                        st.caption("Lane G: General Assistant")
-                        t_start = time.time()
-                        
-                        import requests
-                        try:
-                            gen, provider_name, _ = qa_agent.run_lane_g(query, stream=True)
-                            for token in gen:
-                                full_response += token
-                                message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
-                        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                            full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
-                            provider_name = "unavailable"
-                            
-                        t_end = time.time()
-                        full_response += f"\n\n*(Query completed in {t_end - t_start:.2f}s using {provider_name})*"
-                        message_placeholder.markdown(full_response)
-                        st.session_state["last_provider"] = provider_name
-                        
-                    else:
-                        st.caption("Lane B: Narrative RAG")
-                        t_start = time.time()
-                        target_comp = comps[0] if comps else None
-                        target_year = years[0] if years else None
-                        
-                        is_deep_dive = False
-                        if "question_understanding" in classification:
-                            is_deep_dive = classification["question_understanding"].get("is_deep_dive", False)
-                        
-                        if target_comp and any(w in query.lower() for w in ["summarize", "summary", "overview"]):
-                            gen, provider_name = analysis_agent.summarize_report(target_comp, target_year, stream=True)
-                        else:
-                            gen, provider_name, _ = qa_agent.run_lane_b(target_comp, target_year, query, stream=True, is_deep_dive=is_deep_dive)
-                            
-                        import requests
-                        try:
-                            for token in gen:
-                                full_response += token
-                                message_placeholder.markdown(full_response + " <span class='sprout-loader'>🌱</span>", unsafe_allow_html=True)
-                        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                            full_response = "⚠️ Connection to LLM failed. Please ensure the backend services are running."
-                            provider_name = "unavailable"
-                            
-                        t_end = time.time()
-                        full_response += f"\n\n*(Query completed in {t_end - t_start:.2f}s using {provider_name})*"
-                        message_placeholder.markdown(full_response)
-                        st.session_state["last_provider"] = provider_name
-                    
-                    # Save response to cache
-                    query_cache.set_cached_answer(cache_comp, cache_yr, query, full_response)
-                    
-                    # Save message to session state
-                    st.session_state["messages"].append({
-                        "role": "assistant",
-                        "content": full_response,
-                        "chart": fig,
-                        "chart_reused": is_reused,
-                        "chart_refreshed_time": refreshed_time,
-                        "lane": lane,
-                        "chart_id": chart_id
-                    })
-                    save_message_async(conv_id, "assistant", full_response, lane=lane, chart_id=chart_id)
-                    st.rerun()

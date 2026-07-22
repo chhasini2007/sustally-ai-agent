@@ -1,13 +1,66 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Caching and testing environments
+.pytest_cache/
+.mypy_cache/
+.cache/
+node_modules/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE directories
+.idea/
+.vscode/
+
+# Virtual environments
 .venv/
 venv/
-*.pyc
+env/
+ENV/
+
+# Environment configurations and secrets
 .env
+.env.*
+
+# Logs and temporary files
+logs/
+*.log
+*.tmp
+
+# Vector stores and databases
+vector_db/
+chroma_db/
+db/
+test_vector_db/
+test_vector_db_*/
+*.sqlite
+*.db
+
+# Data files and generated artifacts
+generated_reports/
+cache/
+uploads/
 data/raw_reports/
+data/processed/
 data/*.db
 data/*.sqlite
-data/processed/
-vector_db/
-.streamlit/*
+data/*.json
+data/audit_report.txt
+
+
+# File extension exclusions
+*.pdf
+*.xml
+*.csv
+
+# Exceptions to exclusions
+!CF-BRSR-equities-14-Jul-2026.csv
 !.streamlit/config.toml
 !.streamlit/secrets.toml.example
+!tests/

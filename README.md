@@ -1,63 +1,167 @@
-# Sustally Sustainability Report Agent
+# Sustally ESG Intelligence Platform 
 
-AI-powered Sustainability Report Analysis Agent. Rebuilt with a performance-optimized architecture that delivers sub-second response times for structured numeric queries (via an SQLite database) and fast narrative responses (via pre-filtered ChromaDB vector store RAG).
+**Sustally** is an enterprise-grade, AI-powered ESG (Environmental, Social, and Governance) intelligence dashboard designed to ingest, process, and analyze Business Responsibility and Sustainability Reports (BRSR) of public and private companies.
 
-## Installation & Setup
+Built with a performance-optimized multi-agent architecture, Sustally delivers sub-second response times for structured numeric queries (via an SQLite database) and highly-grounded qualitative insights (via a pre-filtered ChromaDB vector store RAG).
 
-1. **Clone & Navigate**:
-   ```bash
-   cd sustally
-   ```
+---
 
-2. **Initialize Environment**:
-   Create a `.env` file from the example:
-   ```bash
-   cp .env.example .env
-   ```
+## 🚀 Key Features
 
-3. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+- **Dual-Retrieval Routing**: Uses deterministic lane routing (SQLite vs. ChromaDB) to deliver instant quantitative data lookups and precise qualitative semantic search.
+- **Multi-Agent Orchestration**: Coordinates specialized agents (Planner, Retrieval, Reasoning, Comparison, Ranking, and Report Generator) to fulfill complex analysis tasks.
+- **Automated Ingestion Pipeline**: Bulk and incremental parser for PDF and XML reports, standardizing names, years, metrics, and units via a unified taxonomy mapping.
+- **Year-Over-Year (YoY) Analytics**: Automatically calculates trends, percentage changes, and direction of metrics over multiple fiscal years.
+- **Bloomberg-Grade Reports**: Generates formal ESG analyst reports featuring Executive Summaries, Grounded Evidence, Confidence Levels, and Citations.
+- **Interactive Visualization**: Automatically generates Plotly charts for trends, comparative leaderboards, and metric distributions.
+- **Secure Demo Tunneling**: Out-of-the-box ngrok integration for sharing authenticated local app instances securely.
 
-## LLM Configuration
+---
 
-Sustally supports different LLM providers depending on the deployment environment:
-- **Local Development**: Set `LLM_PROVIDER=ollama` in your `.env`. Make sure Ollama is running locally with the configured model (default: `qwen2.5:7b`).
-- **Cloud Deployment (Streamlit Community Cloud)**: Set `LLM_PROVIDER=openai` and provide `OPENAI_API_KEY` via the platform's secrets manager. Ollama cannot run on Streamlit Cloud, so OpenAI (gpt-4o-mini) serves as the cloud LLM provider.
+## 🏛️ System Architecture
 
-## Running the App
+Sustally avoids the latency and hallucination pitfalls of generic RAG systems by separating queries into distinct execution paths:
 
-### Normal Local Mode
-To launch the Streamlit frontend dashboard locally:
-```bash
-.venv\Scripts\python.exe -m streamlit run app/streamlit_app.py --server.port 8501 --server.headless true
-```
+1. **Planner Agent**: Classifies question intent, extracts target company/year metadata, and matches required ESG variables against a unified taxonomy.
+2. **Lane Routing**:
+   - **Lane A (Quantitative)**: Deterministic SQLite database lookup for exact values (e.g., water consumption, emissions totals).
+   - **Lane B (Qualitative)**: Semantic vector store search limited only to text chunks belonging to the target report, preventing cross-company contamination.
+   - **Lane C (Comparative)**: Dynamic comparisons and sector-wide ranking analysis.
+   - **Lane D (Out of Scope)**: Graceful deflected fallback for unrelated prompts.
+3. **Reasoning and Comparison Agent**: Performs calculations, delta tracking, and unit conversions.
+4. **Report Assembly**: Formats and packages output with data grounding logs.
 
-### Ingestion CLI
-To incrementally ingest raw report files stored under `data/raw_reports/`:
-```bash
-python run.py --ingest-new
+Detailed design diagrams are available in [Architecture.md](docs/Architecture.md).
+
+---
+
+## 📂 Project Structure
+
+```text
+sustally/
+├── .streamlit/                   # Streamlit configurations and secret examples
+├── app/
+│   └── streamlit_app.py          # Dashboard UI entrypoint
+├── config/
+│   ├── settings.py               # Central directory paths, models, and environment variables
+│   └── __init__.py
+├── data/
+│   ├── incoming_xml/             # Target directory for bulk XML reports
+│   └── raw_reports/              # Target directory for PDF reports
+├── docs/                         # Detailed architecture, setup, and workflow documentation
+│   ├── Architecture.md
+│   ├── Setup.md
+│   ├── Deployment.md
+│   └── Workflow.md
+├── scripts/                      # System administration, audits, and ingestion utilities
+│   └── data_quality_audit.py     # Check folder/year alignments and data parsing
+├── src/                          # Application core package
+│   ├── agents/                   # Agent logic files (Planner, Retrieval, Reasoning, etc.)
+│   ├── database/                 # SQLite and ChromaDB store connectors
+│   ├── embeddings/               # Tokenizers and SentenceTransformer embeddings manager
+│   ├── ingestion/                # PDF loaders, XML parsers, and loaders
+│   ├── processing/               # Taxonomies, metrics normalizers, and text chunkers
+│   ├── retrieval/                # Multi-lane routing, query parser, and routers
+│   ├── utils/                    # Shared caching and helpers
+│   └── visualization/            # Plotly dashboard chart generators
+├── tests/                        # Suite of active unit tests
+├── LICENSE                       # MIT License
+├── README.md                     # This file
+├── requirements.txt              # Project package dependencies
+└── run.py                        # Ingestion and pre-flight diagnostics CLI
 ```
 
 ---
 
-## Secure Demo Tunneling (ngrok Setup)
+## 🛠️ Installation & Setup
 
-Sustally includes a secure, temporary sharing setup for demos using ngrok.
+Please refer to the step-by-step [Setup Guide](docs/Setup.md) for detailed guidelines. A quick-start summary is provided below:
 
-### One-Time Setup:
-1. Register/Log in to [ngrok](https://ngrok.com/).
-2. Retrieve your authtoken from your ngrok dashboard.
-3. Add the authtoken to your local ngrok agent setup:
-   ```powershell
-   ngrok config add-authtoken <your-authtoken>
-   ```
+### 1. Configure Local Environment
+```bash
+# Clone the repository
+git clone https://github.com/your-organization/sustally.git
+cd sustally
 
-### Running the secure demo:
-1. Configure your desired credentials (`DEMO_USER` and `DEMO_PASS`) in `.env`.
-2. Run the secure demo script:
-   ```powershell
-   .\run_demo.ps1
-   ```
-This starts the Streamlit server, verifies connectivity, launches an authenticated ngrok tunnel on port 8501, and prints the public URL to your console. Press `Ctrl+C` in the console window to stop all processes cleanly.
+# Initialize virtual environment and install packages
+python -m venv .venv
+source .venv/bin/activate  # Or .venv\Scripts\Activate.ps1 on Windows
+pip install -r requirements.txt
+```
+
+### 2. Configure Credentials
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+Update the `.env` settings to match your chosen LLM provider (Ollama or OpenAI) and credentials.
+
+### 3. Pull LLM Model & Run Ingestion
+If running locally, pull the Ollama model:
+```bash
+ollama pull qwen2.5:7b
+```
+Ensure Ollama is running and ingest the sample reports:
+```bash
+python run.py --check-llm
+python run.py --import-xml
+```
+
+---
+
+## 📈 Usage & CLI Reference
+
+### Running the CLI Engine
+The root `run.py` script manages back-end operations:
+```bash
+# Verify LLM provider connectivity
+python run.py --check-llm
+
+# Bulk import data/incoming_xml/ reports
+python run.py --import-xml
+
+# Scan and incrementally ingest new files under raw_reports/
+python run.py --ingest-new
+
+# List all registered companies
+python run.py --list-companies
+```
+
+### Launching the Dashboard UI
+To open the Streamlit web dashboard locally:
+```bash
+python -m streamlit run app/streamlit_app.py
+```
+Open `http://localhost:8501` in your browser.
+
+---
+
+## ❓ Sample Queries
+
+Try the following questions in the dashboard query box:
+
+- **Lane A (Quantitative lookup)**: `"What is the water consumption of Infosys in 2024?"`
+- **Lane B (Narrative lookup)**: `"What is the climate risk mitigation strategy of Tata Consultancy Services?"`
+- **Lane C (Comparison)**: `"Compare Scope 1 emissions between TCS and Infosys in 2024."`
+- **Lane C (Ranking)**: `"Rank pharmaceutical companies by water consumption."`
+- **Lane C (Trend)**: `"Water consumption trend for Infosys between 2022 and 2024."`
+
+---
+
+## 🖼️ Screenshots
+
+*Dashboard UI placeholder - Coming soon*
+
+---
+
+## 🔮 Future Improvements
+
+- **Cross-Report Tabular Extractors**: Enhance processing for multi-page tables in scanned PDFs.
+- **Taxonomy Expansion**: Expand default taxonomies to cover global standards (e.g. GRI, SASB, CSRD) in addition to SEBI BRSR.
+- **Enhanced LLM Cache**: Implement vector semantic cache for repeated query intents to reduce API costs.
+
+---
+
+## 📄 License
+
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.

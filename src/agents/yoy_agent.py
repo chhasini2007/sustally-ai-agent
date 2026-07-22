@@ -25,9 +25,11 @@ class YoYAgent:
     ) -> Tuple[str, Optional[Any], bool, Optional[str], Optional[int]]:
         """
         Calculates YoY change for a metric and company.
-        Returns:
-            (response_text, fig, is_reused, refreshed_time, chart_id)
         """
+        from src.processing.metric_taxonomy import ALIASED_METRICS
+        if metric_key in ALIASED_METRICS:
+            metric_key = ALIASED_METRICS[metric_key]
+
         metric_info = METRIC_TAXONOMY.get(metric_key)
         if not metric_info:
             return f"Unknown metric key: {metric_key}", None, False, None, None

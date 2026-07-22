@@ -219,6 +219,31 @@ class DocumentManager:
             file_type = res["file_type"]
             file_name = res["file_name"]
             
+            if file_type == "xml":
+                from src.ingestion.bulk_xml_importer import detect_metadata_from_xml
+                from pathlib import Path
+                internal_company, internal_year, err = detect_metadata_from_xml(Path(file_path))
+                if internal_company:
+                    resolved_internal, _ = company_router.resolve_companies_and_years(internal_company)
+                    if resolved_internal:
+                        internal_company = resolved_internal[0]
+                    if internal_company != company:
+                        logger.error(f"[SAFEGUARD] XML file '{file_name}' contains internally declared company '{internal_company}', but is physically located under folder '{company}'. Skipping ingestion to prevent data misattribution.")
+                        self.index[file_path] = {
+                            "file_name": file_name,
+                            "file_path": file_path,
+                            "company": company,
+                            "year": year,
+                            "file_type": file_type,
+                            "file_hash": file_hash,
+                            "processed_date": datetime.now().isoformat(),
+                            "status": "failed",
+                            "error": f"Mismatched company directory. Internal company is '{internal_company}'",
+                            "chunks": 0,
+                            "source_url": find_source_url_for_file(file_name)
+                        }
+                        continue
+            
             if res.get("status") == "failed":
                 logger.error(f"Failed to process {file_name}: {res.get('error_message')}")
                 source_url = None
