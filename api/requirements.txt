@@ -1,0 +1,10 @@
+fastapi
+pydantic
+requests
+python-dotenv
+pandas
+plotly
+pypdf
+pdfplumber
+tqdm
+urllib3

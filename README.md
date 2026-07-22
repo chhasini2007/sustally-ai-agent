@@ -161,11 +161,32 @@ Try the following questions in the dashboard query box:
 - **Taxonomy Expansion**: Expand default taxonomies to cover global standards (e.g. GRI, SASB, CSRD) in addition to SEBI BRSR.
 - **Enhanced LLM Cache**: Implement vector semantic cache for repeated query intents to reduce API costs.
 
+## ☁️ Vercel Cloud Deployment
+
+Sustally is fully configured for serverless deployment on **Vercel** with a **Next.js frontend** and a **FastAPI backend**.
+
+### Deployment Steps:
+1. **Push code to GitHub**: Create a repository and push your project files.
+2. **Import to Vercel**:
+   - Log in to Vercel and import your repository.
+   - Set the Framework Preset to **Next.js** (Vercel will auto-detect it).
+3. **Configure Environment Variables**:
+   Add the following variables in your Vercel Project Settings:
+   - `LLM_PROVIDER`: Set to `openai` (Ollama cannot run serverless).
+   - `OPENAI_API_KEY`: Your OpenAI API key.
+   - `OPENAI_MODEL`: `gpt-4o-mini` (or preferred model).
+4. **Deploy**: Click **Deploy**.
+5. **Verify Endpoints**:
+   - Root URL `/` loads the Next.js search dashboard interface.
+   - `/api/health` returns `{"status": "healthy"}` confirming FastAPI backend status.
+   - `/api/ask` serves the multi-agent question answering capabilities.
+
+> [!NOTE]
+> The local Streamlit dashboard remains fully available via `python -m streamlit run app/streamlit_app.py`. For production-grade Vercel RAG capabilities, configure a hosted cloud database and cloud storage as explained in [Deployment.md](docs/Deployment.md) (local file writes are ignored on Vercel's read-only serverless containers).
+
 ---
 
 ## 📄 License
 
 Distributed under the MIT License. See [LICENSE](LICENSE) for details.
-=======
-# sustally-ai-agent
->>>>>>> 6186c933e99214ceb1e918c38afc03ae875ef878
+

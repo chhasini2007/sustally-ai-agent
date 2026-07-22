@@ -6,19 +6,33 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Base directories
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
-RAW_DIR = DATA_DIR / "raw_reports"
-PROCESSED_DIR = DATA_DIR / "processed"
-VECTOR_DB_DIR = PROJECT_ROOT / "vector_db"
-INCOMING_XML_DIR = DATA_DIR / "incoming_xml"
+IS_VERCEL = "VERCEL" in os.environ
+
+if IS_VERCEL:
+    # On Vercel, use /tmp for all writeable paths
+    DATA_DIR = Path("/tmp") / "data"
+    RAW_DIR = DATA_DIR / "raw_reports"
+    PROCESSED_DIR = DATA_DIR / "processed"
+    VECTOR_DB_DIR = Path("/tmp") / "vector_db"
+    INCOMING_XML_DIR = DATA_DIR / "incoming_xml"
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    DATA_DIR = PROJECT_ROOT / "data"
+    RAW_DIR = DATA_DIR / "raw_reports"
+    PROCESSED_DIR = DATA_DIR / "processed"
+    VECTOR_DB_DIR = PROJECT_ROOT / "vector_db"
+    INCOMING_XML_DIR = DATA_DIR / "incoming_xml"
 
 # Create directories if they do not exist
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
-INCOMING_XML_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
+    INCOMING_XML_DIR.mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    logger.warning(f"Could not create directories: {e}")
+
 
 # Database and Cache Paths (Automatically use test files when running unit tests)
 import sys

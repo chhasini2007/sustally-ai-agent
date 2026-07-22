@@ -1,4 +1,8 @@
-import chromadb
+try:
+    import chromadb
+except ImportError:
+    chromadb = None
+
 from typing import List, Dict, Any, Optional
 from config import settings
 
@@ -14,11 +18,17 @@ class ChromaStore:
     def __init__(self, persist_dir: str = str(settings.VECTOR_DB_DIR)):
         if self._initialized:
             return
+        if chromadb is None:
+            raise ImportError(
+                "ChromaDB library is not installed or available in this environment. "
+                "Vector retrieval is disabled."
+            )
         self.client = chromadb.PersistentClient(path=persist_dir)
         self.collection = self.client.get_or_create_collection(
             name=settings.CHROMA_COLLECTION_NAME
         )
         self._initialized = True
+
 
     def add_chunks(
         self,
